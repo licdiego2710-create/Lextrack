@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GANGSTER BARBER — Barbería de Élite | Zapopan</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@300;400;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --gold: #c9a84c; --gold-l: #e8c96a; --black: #060606;
+      --dark: #0f0f0f; --gray: #1a1a1a; --text: #f0ede8; --muted: #5e5a55;
+    }
+    html { scroll-behavior: smooth; }
+    body { background: var(--black); color: var(--text); font-family: 'Inter', sans-serif; overflow-x: hidden; cursor: none; }
+
+    /* CURSOR */
+    #cur { position:fixed; width:10px; height:10px; background:var(--gold); border-radius:50%; pointer-events:none; z-index:9999; transform:translate(-50%,-50%); mix-blend-mode:difference; }
+    #cur-r { position:fixed; width:38px; height:38px; border:1px solid rgba(201,168,76,.35); border-radius:50%; pointer-events:none; z-index:9998; transform:translate(-50%,-50%); transition:width .3s,height .3s; }
+    body:has(a:hover) #cur { width:18px; height:18px; }
+
+    /* CANVAS */
+    #canvas { position:fixed; top:0; left:0; width:100%; height:100%; z-index:0; }
+
+    /* NAV */
+    nav { position:fixed; top:0; left:0; right:0; z-index:100; display:flex; justify-content:space-between; align-items:center; padding:2rem 4rem; }
+    .logo { font-family:'Bebas Neue',sans-serif; font-size:1.6rem; letter-spacing:.35em; color:#fff; text-decoration:none; mix-blend-mode:difference; }
+    .nav-links { display:flex; gap:3rem; list-style:none; mix-blend-mode:difference; }
+    .nav-links a { font-size:.72rem; letter-spacing:.22em; text-transform:uppercase; color:#fff; text-decoration:none; opacity:.65; transition:opacity .3s; }
+    .nav-links a:hover { opacity:1; }
+    .nav-cta { padding:.65rem 1.8rem; border:1px solid var(--gold); color:var(--gold); font-size:.7rem; letter-spacing:.2em; text-transform:uppercase; text-decoration:none; transition:background .3s,color .3s; }
+    .nav-cta:hover { background:var(--gold); color:var(--black); }
+
+    /* HERO */
+    section { position:relative; z-index:1; }
+    #hero { height:100vh; display:flex; flex-direction:column; justify-content:flex-end; padding:0 4rem 7rem; }
+    .hero-kicker { font-size:.68rem; letter-spacing:.38em; text-transform:uppercase; color:var(--gold); margin-bottom:1.4rem; opacity:0; animation:fadeUp .8s .3s forwards; }
+    .hero-title { font-family:'Bebas Neue',sans-serif; font-size:clamp(4.5rem,13vw,12.5rem); line-height:.92; letter-spacing:-.01em; opacity:0; animation:fadeUp .9s .5s forwards; }
+    .hero-title .line1 { display:block; background:linear-gradient(130deg,#fff 50%,var(--gold)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+    .hero-title .line2 { display:block; color:var(--gold); -webkit-text-fill-color:var(--gold); }
+    .hero-title .line3 { display:block; background:linear-gradient(130deg,#fff 50%,var(--gold)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+    .hero-row { margin-top:2.5rem; display:flex; align-items:center; gap:5rem; opacity:0; animation:fadeUp .9s .7s forwards; }
+    .hero-row p { font-size:.85rem; color:var(--muted); max-width:26ch; line-height:1.75; }
+    .btn-ghost { display:inline-flex; align-items:center; gap:.75rem; padding:1rem 2.5rem; border:1px solid var(--gold); color:var(--gold); font-size:.72rem; letter-spacing:.25em; text-transform:uppercase; text-decoration:none; transition:background .3s,color .3s; white-space:nowrap; }
+    .btn-ghost:hover { background:var(--gold); color:var(--black); }
+    .btn-ghost .arr { transition:transform .3s; }
+    .btn-ghost:hover .arr { transform:translateX(6px); }
+    .scroll-hint { position:absolute; bottom:2.8rem; right:4rem; font-size:.62rem; letter-spacing:.32em; text-transform:uppercase; color:var(--muted); writing-mode:vertical-rl; display:flex; align-items:center; gap:.8rem; opacity:0; animation:fadeIn 1s 1.3s forwards; }
+    .scroll-hint::before { content:''; width:1px; height:55px; background:linear-gradient(to bottom,transparent,var(--gold)); }
+
+    /* TOOL LABELS (overlay on canvas) */
+    #tool-label { position:fixed; padding:.5rem 1.2rem; background:rgba(0,0,0,.75); border:1px solid rgba(201,168,76,.4); font-size:.7rem; letter-spacing:.2em; text-transform:uppercase; color:var(--gold); pointer-events:none; z-index:50; opacity:0; transition:opacity .25s; backdrop-filter:blur(8px); transform:translate(-50%,-150%); }
+
+    /* MARQUEE */
+    .mq-wrap { padding:1.8rem 0; border-top:1px solid rgba(255,255,255,.05); border-bottom:1px solid rgba(255,255,255,.05); overflow:hidden; background:rgba(0,0,0,.55); backdrop-filter:blur(16px); }
+    .mq { display:flex; gap:3.5rem; animation:mq 20s linear infinite; width:max-content; }
+    .mq span { font-family:'Bebas Neue',sans-serif; font-size:1rem; letter-spacing:.32em; color:var(--muted); white-space:nowrap; }
+    .mq .dot { color:var(--gold); font-size:1.3rem; line-height:1; }
+    @keyframes mq { from{transform:translateX(0)} to{transform:translateX(-50%)} }
+
+    /* ABOUT */
+    #about { min-height:100vh; display:grid; grid-template-columns:1fr 1fr; align-items:center; gap:6rem; padding:11rem 4rem; }
+    .sec-num { font-size:.62rem; letter-spacing:.32em; color:var(--gold); margin-bottom:1.4rem; }
+    .sec-title { font-family:'Bebas Neue',sans-serif; font-size:clamp(3rem,6.5vw,5.5rem); line-height:1; letter-spacing:.02em; }
+    .about-body { font-size:.95rem; color:var(--muted); line-height:1.95; margin-top:2rem; }
+    .about-body strong { color:var(--text); font-weight:400; }
+    .stats { display:flex; gap:3rem; margin-top:3.5rem; }
+    .stat-n { font-family:'Bebas Neue',sans-serif; font-size:2.8rem; color:var(--gold); line-height:1; }
+    .stat-l { font-size:.66rem; letter-spacing:.2em; text-transform:uppercase; color:var(--muted); margin-top:.3rem; }
+    .about-right { position:relative; }
+    .img-wrap { aspect-ratio:3/4; overflow:hidden; background:var(--gray); position:relative; }
+    .img-wrap img { width:100%; height:100%; object-fit:cover; filter:grayscale(15%); transition:transform .8s,filter .8s; }
+    .img-wrap:hover img { transform:scale(1.04); filter:grayscale(0%); }
+    .img-wrap::after { content:''; position:absolute; inset:0; border:1px solid rgba(201,168,76,.15); }
+    .gold-sq { position:absolute; width:110px; height:110px; border:1px solid var(--gold); top:-22px; right:-22px; z-index:-1; }
+
+    /* SERVICES */
+    #services { padding:11rem 4rem; background:linear-gradient(to bottom,transparent,var(--dark) 15%,var(--dark) 85%,transparent); }
+    .svc-hdr { display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:5rem; }
+    .svc-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:1.5px; }
+    .svc-card { position:relative; padding:3rem 2.5rem; background:rgba(255,255,255,.02); border:1px solid rgba(255,255,255,.05); transition:background .4s,border-color .4s; overflow:hidden; cursor:none; }
+    .svc-card::before { content:''; position:absolute; bottom:0; left:0; width:0; height:2px; background:var(--gold); transition:width .5s; }
+    .svc-card:hover { background:rgba(201,168,76,.04); border-color:rgba(201,168,76,.2); }
+    .svc-card:hover::before { width:100%; }
+    .svc-n { font-size:.62rem; letter-spacing:.32em; color:var(--gold); margin-bottom:1.5rem; }
+    .svc-name { font-family:'Bebas Neue',sans-serif; font-size:2rem; letter-spacing:.04em; margin-bottom:1rem; }
+    .svc-desc { font-size:.83rem; color:var(--muted); line-height:1.85; }
+    .svc-price { margin-top:2rem; font-family:'Bebas Neue',sans-serif; font-size:1.7rem; color:var(--gold); }
+    .svc-icon { position:absolute; top:1.8rem; right:2rem; font-size:2.4rem; opacity:.07; transition:opacity .4s,transform .4s; }
+    .svc-card:hover .svc-icon { opacity:.14; transform:rotate(8deg) scale(1.1); }
+
+    /* GALLERY */
+    #gallery { padding:11rem 4rem; }
+    .gal-hdr { margin-bottom:4rem; }
+    .gal-grid { display:grid; grid-template-columns:repeat(12,1fr); grid-template-rows:repeat(2,300px); gap:4px; }
+    .g-i { background:var(--gray); overflow:hidden; position:relative; }
+    .g-i img { width:100%; height:100%; object-fit:cover; filter:grayscale(25%); transition:transform .7s,filter .7s; }
+    .g-i:hover img { transform:scale(1.06); filter:grayscale(0%); }
+    .g1{grid-column:span 5} .g2{grid-column:span 4} .g3{grid-column:span 3}
+    .g4{grid-column:span 3} .g5{grid-column:span 5} .g6{grid-column:span 4}
+    .g-ov { position:absolute; inset:0; background:linear-gradient(to top,rgba(0,0,0,.7) 0%,transparent 50%); opacity:0; transition:opacity .4s; display:flex; align-items:flex-end; padding:1.4rem; }
+    .g-i:hover .g-ov { opacity:1; }
+    .g-ov span { font-size:.67rem; letter-spacing:.22em; text-transform:uppercase; color:var(--gold); }
+
+    /* BOOKING */
+    #booking { min-height:100vh; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:10rem 4rem; position:relative; overflow:hidden; }
+    .bk-bg { position:absolute; font-family:'Bebas Neue',sans-serif; font-size:clamp(9rem,22vw,20rem); letter-spacing:.12em; color:transparent; -webkit-text-stroke:1px rgba(255,255,255,.03); z-index:0; user-select:none; pointer-events:none; }
+    .bk-eyebrow { font-size:.68rem; letter-spacing:.42em; text-transform:uppercase; color:var(--gold); margin-bottom:2rem; position:relative; z-index:1; }
+    .bk-title { font-family:'Bebas Neue',sans-serif; font-size:clamp(3.5rem,9vw,8rem); line-height:.95; max-width:14ch; margin-bottom:3rem; position:relative; z-index:1; }
+    .bk-sub { font-size:.95rem; color:var(--muted); max-width:38ch; line-height:1.85; margin-bottom:4rem; position:relative; z-index:1; }
+    .btn-fill { display:inline-flex; align-items:center; gap:1rem; padding:1.3rem 4rem; background:var(--gold); color:var(--black); font-size:.78rem; letter-spacing:.3em; text-transform:uppercase; text-decoration:none; font-weight:600; transition:background .3s,transform .3s,box-shadow .3s; position:relative; z-index:1; }
+    .btn-fill:hover { background:var(--gold-l); transform:translateY(-3px); box-shadow:0 20px 60px rgba(201,168,76,.28); }
+
+    /* CONTACT */
+    #contact { padding:8rem 4rem; border-top:1px solid rgba(255,255,255,.05); display:grid; grid-template-columns:1fr 1px 1fr 1px 1fr; gap:4rem; background:var(--dark); }
+    .ct-block { display:flex; flex-direction:column; gap:1rem; }
+    .ct-label { font-size:.62rem; letter-spacing:.32em; text-transform:uppercase; color:var(--gold); }
+    .ct-val { font-family:'Bebas Neue',sans-serif; font-size:1.45rem; letter-spacing:.04em; line-height:1.3; }
+    .ct-sub { font-size:.83rem; color:var(--muted); line-height:1.75; }
+    .ct-div { background:rgba(255,255,255,.05); align-self:stretch; }
+    .h-row { display:flex; justify-content:space-between; font-size:.83rem; color:var(--muted); padding:.45rem 0; border-bottom:1px solid rgba(255,255,255,.04); }
+    .h-row span:last-child { color:var(--text); }
+    .badge { display:inline-flex; align-items:center; gap:.5rem; font-size:.62rem; letter-spacing:.2em; text-transform:uppercase; margin-top:.6rem; }
+    .badge::before { content:''; width:6px; height:6px; border-radius:50%; animation:pulse 2s infinite; }
+    .badge.open { color:#4caf6e; } .badge.open::before { background:#4caf6e; }
+    .badge.closed { color:#e05252; } .badge.closed::before { background:#e05252; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+    .ct-btns { display:flex; gap:.8rem; flex-wrap:wrap; margin-top:.8rem; }
+    .ct-btn { padding:.65rem 1.4rem; font-size:.68rem; letter-spacing:.2em; text-transform:uppercase; text-decoration:none; transition:background .3s,color .3s; }
+    .ct-btn-gold { border:1px solid var(--gold); color:var(--gold); }
+    .ct-btn-gold:hover { background:var(--gold); color:var(--black); }
+    .ct-btn-wa { border:1px solid #25d366; color:#25d366; }
+    .ct-btn-wa:hover { background:#25d366; color:#000; }
+
+    /* FOOTER */
+    footer { padding:3.5rem 4rem; border-top:1px solid rgba(255,255,255,.05); display:flex; justify-content:space-between; align-items:center; }
+    .f-logo { font-family:'Bebas Neue',sans-serif; font-size:1.4rem; letter-spacing:.32em; color:#fff; text-decoration:none; }
+    .f-copy { font-size:.68rem; letter-spacing:.1em; color:var(--muted); }
+    .f-soc { display:flex; gap:2rem; list-style:none; }
+    .f-soc a { font-size:.68rem; letter-spacing:.2em; text-transform:uppercase; color:var(--muted); text-decoration:none; transition:color .3s; }
+    .f-soc a:hover { color:var(--gold); }
+
+    /* ANIMATIONS */
+    @keyframes fadeUp { from{opacity:0;transform:translateY(40px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+    .reveal { opacity:0; transform:translateY(50px); transition:opacity .9s cubic-bezier(.16,1,.3,1),transform .9s cubic-bezier(.16,1,.3,1); }
+    .reveal.vis { opacity:1; transform:translateY(0); }
+    .d1{transition-delay:.1s} .d2{transition-delay:.2s} .d3{transition-delay:.3s}
+
+    /* RESPONSIVE */
+    @media(max-width:900px){
+      nav{padding:1.5rem 2rem} .nav-links{display:none}
+      #hero{padding:0 2rem 5rem}
+      #about{grid-template-columns:1fr;padding:8rem 2rem}
+      #services{padding:8rem 2rem} .svc-grid{grid-template-columns:1fr} .svc-hdr{flex-direction:column;align-items:flex-start;gap:1rem}
+      #gallery{padding:8rem 2rem} .gal-grid{grid-template-columns:1fr 1fr;grid-template-rows:unset} .g1,.g2,.g3,.g4,.g5,.g6{grid-column:span 1;height:180px}
+      #booking{padding:8rem 2rem}
+      #contact{grid-template-columns:1fr;padding:5rem 2rem} .ct-div{display:none}
+      footer{flex-direction:column;gap:2rem;text-align:center}
+    }
+  </style>
+</head>
+<body>
+
+<div id="cur"></div>
+<div id="cur-r"></div>
+<div id="tool-label"></div>
+<canvas id="canvas"></canvas>
+
+<!-- NAV -->
+<nav>
+  <a href="#" class="logo">GANGSTER BARBER</a>
+  <ul class="nav-links">
+    <li><a href="#about">Nosotros</a></li>
+    <li><a href="#services">Servicios</a></li>
+    <li><a href="#gallery">Galería</a></li>
+    <li><a href="#booking">Reservar</a></li>
+  </ul>
+  <a href="tel:+523314307829" class="nav-cta">331 430 7829</a>
+</nav>
+
+<!-- HERO -->
+<section id="hero">
+  <p class="hero-kicker">✦ Barbería de Élite — Zapopan, Jalisco</p>
+  <h1 class="hero-title">
+    <span class="line1">DONDE CADA</span>
+    <span class="line2">DETALLE</span>
+    <span class="line3">CUENTA.</span>
+  </h1>
+  <div class="hero-row">
+    <p>Tu imagen en manos expertas. Precisión, estilo y experiencia en cada corte.</p>
+    <a href="#booking" class="btn-ghost">Agenda tu cita <span class="arr">→</span></a>
+  </div>
+  <div class="scroll-hint">Explorar</div>
+</section>
+
+<!-- MARQUEE -->
+<div class="mq-wrap">
+  <div class="mq">
+    <span>FADE</span><span class="dot">◆</span><span>CORTE CLÁSICO</span><span class="dot">◆</span>
+    <span>DISEÑO DE BARBA</span><span class="dot">◆</span><span>TINTE</span><span class="dot">◆</span>
+    <span>FADE Y BARBA</span><span class="dot">◆</span><span>ZAPOPAN</span><span class="dot">◆</span>
+    <span>FADE</span><span class="dot">◆</span><span>CORTE CLÁSICO</span><span class="dot">◆</span>
+    <span>DISEÑO DE BARBA</span><span class="dot">◆</span><span>TINTE</span><span class="dot">◆</span>
+    <span>FADE Y BARBA</span><span class="dot">◆</span><span>ZAPOPAN</span><span class="dot">◆</span>
+  </div>
+</div>
+
+<!-- ABOUT -->
+<section id="about">
+  <div>
+    <p class="sec-num reveal">01 / Nosotros</p>
+    <h2 class="sec-title reveal d1">MAESTRÍA<br>EN CADA<br>NAVAJA.</h2>
+    <p class="about-body reveal d2">
+      En <strong>Gangster Barber</strong> cada corte es una declaración de identidad.
+      Nuestros barberos son <strong>artesanos del estilo</strong>, dominando desde el fade perfecto
+      hasta el diseño de barba más detallado. Tu imagen, nuestra obsesión.
+    </p>
+    <div class="stats reveal d3">
+      <div><div class="stat-n">7+</div><div class="stat-l">Años de experiencia</div></div>
+      <div><div class="stat-n">9.7K</div><div class="stat-l">Seguidores Instagram</div></div>
+      <div><div class="stat-n">★4.9</div><div class="stat-l">Calificación</div></div>
+    </div>
+  </div>
+  <div class="about-right reveal">
+    <div class="img-wrap">
+      <img src="img/foto2.png" alt="Gangster Barber Shop" loading="lazy" />
+    </div>
+    <div class="gold-sq"></div>
+  </div>
+</section>
+
+<!-- SERVICES -->
+<section id="services">
+  <div class="svc-hdr">
+    <div>
+      <p class="sec-num reveal" style="margin-bottom:1rem">02 / Servicios</p>
+      <h2 class="sec-title reveal d1">NUESTROS<br>SERVICIOS</h2>
+    </div>
+    <p class="reveal d2" style="font-size:.83rem;color:var(--muted);max-width:28ch;line-height:1.85;text-align:right">
+      Cada servicio ejecutado con precisión y los mejores productos del mercado.
+    </p>
+  </div>
+  <div class="svc-grid">
+    <div class="svc-card reveal"><span class="svc-icon">⚡</span><p class="svc-n">01</p><h3 class="svc-name">Fade</h3><p class="svc-desc">Degradado perfecto desde piel. Zero, bajo, medio o alto con acabado impecable.</p><p class="svc-price">$200</p></div>
+    <div class="svc-card reveal d1"><span class="svc-icon">✂️</span><p class="svc-n">02</p><h3 class="svc-name">Corte Normal</h3><p class="svc-desc">Corte clásico limpio con tijera o máquina. Elegancia y estilo garantizados.</p><p class="svc-price">$200</p></div>
+    <div class="svc-card reveal d2"><span class="svc-icon">🧔</span><p class="svc-n">03</p><h3 class="svc-name">Barba</h3><p class="svc-desc">Perfilado y diseño de barba con navaja. Líneas definidas y precisas.</p><p class="svc-price">$120</p></div>
+    <div class="svc-card reveal"><span class="svc-icon">💈</span><p class="svc-n">04</p><h3 class="svc-name">Fade y Barba</h3><p class="svc-desc">Combo completo: fade degradado más diseño y perfilado de barba.</p><p class="svc-price">$320</p></div>
+    <div class="svc-card reveal d1"><span class="svc-icon">👑</span><p class="svc-n">05</p><h3 class="svc-name">Corte y Barba</h3><p class="svc-desc">Corte normal más diseño de barba. Imagen completa en una visita.</p><p class="svc-price">$320</p></div>
+    <div class="svc-card reveal d2"><span class="svc-icon">🎨</span><p class="svc-n">06</p><h3 class="svc-name">Tinte</h3><p class="svc-desc">Tinte en barba o cabello con productos premium. Color y personalidad.</p><p class="svc-price">Barba $300 · Cabello $400</p></div>
+  </div>
+</section>
+
+<!-- GALLERY -->
+<section id="gallery">
+  <div class="gal-hdr">
+    <p class="sec-num reveal" style="margin-bottom:1rem">03 / Galería</p>
+    <h2 class="sec-title reveal d1">NUESTRO<br>TRABAJO</h2>
+  </div>
+  <div class="gal-grid reveal">
+    <div class="g-i g1"><img src="img/foto3.png" alt="Cortes" loading="lazy"/><div class="g-ov"><span>Nuestro Trabajo</span></div></div>
+    <div class="g-i g2"><img src="img/foto8.png" alt="Barbería" loading="lazy"/><div class="g-ov"><span>Gangster Barber</span></div></div>
+    <div class="g-i g3"><img src="img/foto5.png" alt="Fade" loading="lazy"/><div class="g-ov"><span>Fade</span></div></div>
+    <div class="g-i g4"><img src="img/foto9.png" alt="Corte" loading="lazy"/><div class="g-ov"><span>Corte y Barba</span></div></div>
+    <div class="g-i g5"><img src="img/foto4.png" alt="Estilo" loading="lazy"/><div class="g-ov"><span>Detalles que Cuentan</span></div></div>
+    <div class="g-i g6"><img src="img/foto6.png" alt="Arte" loading="lazy"/><div class="g-ov"><span>Tu Imagen, Nuestro Arte</span></div></div>
+  </div>
+</section>
+
+<!-- BOOKING -->
+<section id="booking">
+  <span class="bk-bg">GANGSTER</span>
+  <p class="bk-eyebrow reveal">✦ Reserva tu espacio</p>
+  <h2 class="bk-title reveal d1">¿LISTO PARA EL CAMBIO?</h2>
+  <p class="bk-sub reveal d2">Agenda tu cita y renueva tu estilo con los mejores barberos de Zapopan.</p>
+  <a href="tel:+523314307829" class="btn-fill reveal d3">Llamar: 331 430 7829 →</a>
+</section>
+
+<!-- CONTACT -->
+<section id="contact">
+  <div class="ct-block reveal">
+    <span class="ct-label">📍 Ubicación</span>
+    <p class="ct-val">Aracely Souza 5690<br>Local 5E</p>
+    <p class="ct-sub">Col. Paseos del Sol<br>Zapopan, Jalisco 45079</p>
+    <a href="https://maps.google.com/?q=Aracely+Souza+5690+Paseos+del+Sol+Zapopan+Jalisco" target="_blank" style="margin-top:.6rem;font-size:.68rem;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);text-decoration:none;">Ver en Maps →</a>
+  </div>
+  <div class="ct-div"></div>
+  <div class="ct-block reveal d1">
+    <span class="ct-label">🕐 Horario</span>
+    <div>
+      <div class="h-row"><span>Lunes – Sábado</span><span>10:00 – 20:00</span></div>
+      <div class="h-row"><span>Domingo</span><span>10:00 – 16:00</span></div>
+    </div>
+    <span class="badge" id="status-badge">Verificando...</span>
+  </div>
+  <div class="ct-div"></div>
+  <div class="ct-block reveal d2">
+    <span class="ct-label">📞 Contacto</span>
+    <p class="ct-val">331 430 7829</p>
+    <p class="ct-sub">Llámanos o escríbenos por WhatsApp para agendar tu cita.</p>
+    <div class="ct-btns">
+      <a href="tel:+523314307829" class="ct-btn ct-btn-gold">Llamar</a>
+      <a href="https://wa.me/523314307829" target="_blank" class="ct-btn ct-btn-wa">WhatsApp</a>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <a href="#" class="f-logo">GANGSTER BARBER</a>
+  <p class="f-copy">© 2025 Gangster Barber Shop. Todos los derechos reservados.</p>
+  <ul class="f-soc">
+    <li><a href="https://www.instagram.com/_gangsterbarber" target="_blank">Instagram</a></li>
+    <li><a href="#">Facebook</a></li>
+    <li><a href="https://wa.me/523314307829" target="_blank">WhatsApp</a></li>
+  </ul>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js"></script>
+<script>
+// ─── CURSOR ───────────────────────────────────────────────────
+const cur = document.getElementById('cur');
+const curR = document.getElementById('cur-r');
+let mx=innerWidth/2, my=innerHeight/2, rx=mx, ry=my;
+document.addEventListener('mousemove', e=>{ mx=e.clientX; my=e.clientY; });
+(function tickCursor(){
+  rx+=(mx-rx)*.13; ry+=(my-ry)*.13;
+  cur.style.cssText=`left:${mx}px;top:${my}px`;
+  curR.style.cssText=`left:${rx}px;top:${ry}px`;
+  requestAnimationFrame(tickCursor);
+})();
+
+// ─── THREE.JS SETUP ───────────────────────────────────────────
+const canvas   = document.getElementById('canvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.6;
+renderer.physicallyCorrectLights=true;
+
+const scene  = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x060606, 0.045);
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 200);
+camera.position.set(0, 1, 10);
+camera.lookAt(0,0,0);
+
+// ─── LIGHTS ───────────────────────────────────────────────────
+const ambient = new THREE.AmbientLight(0xffffff, 0.15);
+scene.add(ambient);
+
+const hemi = new THREE.HemisphereLight(0x1a0f00, 0x000510, 0.6);
+scene.add(hemi);
+
+// Key light — warm gold
+const keyLight = new THREE.PointLight(0xffd080, 120, 30);
+keyLight.position.set(4, 8, 5);
+keyLight.castShadow=true;
+scene.add(keyLight);
+
+// Fill light — cool blue
+const fillLight = new THREE.PointLight(0x4080ff, 40, 25);
+fillLight.position.set(-5, 3, 2);
+scene.add(fillLight);
+
+// Rim light — magenta/purple edge
+const rimLight = new THREE.PointLight(0x8040ff, 20, 20);
+rimLight.position.set(0, -4, -6);
+scene.add(rimLight);
+
+// Pole glow
+const poleGlow = new THREE.PointLight(0xff2200, 8, 6);
+poleGlow.position.set(0,0,1);
+scene.add(poleGlow);
+
+// Mouse-following spotlight
+const mouseLight = new THREE.PointLight(0xffe0a0, 25, 18);
+mouseLight.position.set(0,2,6);
+scene.add(mouseLight);
+
+// ─── MATERIALS ────────────────────────────────────────────────
+const MAT = {
+  chrome:  new THREE.MeshStandardMaterial({ color:0xd8d8d8, metalness:0.98, roughness:0.06 }),
+  gold:    new THREE.MeshStandardMaterial({ color:0xc9a84c, metalness:0.92, roughness:0.12 }),
+  goldD:   new THREE.MeshStandardMaterial({ color:0x8a6020, metalness:0.85, roughness:0.2  }),
+  black:   new THREE.MeshStandardMaterial({ color:0x0d0d0d, metalness:0.7,  roughness:0.25 }),
+  darkM:   new THREE.MeshStandardMaterial({ color:0x1a1a1a, metalness:0.65, roughness:0.3  }),
+  red:     new THREE.MeshStandardMaterial({ color:0xcc1111, metalness:0.4,  roughness:0.5  }),
+  white:   new THREE.MeshStandardMaterial({ color:0xf0f0f0, metalness:0.1,  roughness:0.7  }),
+  blue:    new THREE.MeshStandardMaterial({ color:0x1133cc, metalness:0.4,  roughness:0.5  }),
+  amber:   new THREE.MeshStandardMaterial({ color:0xd4860a, metalness:0.1,  roughness:0.4, transparent:true, opacity:0.82 }),
+  steel:   new THREE.MeshStandardMaterial({ color:0x9090a0, metalness:0.95, roughness:0.08 }),
+};
+
+// ─── HELPER FUNCTIONS ─────────────────────────────────────────
+function box(w,h,d,mat,rx=0,ry=0,rz=0,x=0,y=0,z=0){
+  const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
+  m.rotation.set(rx,ry,rz); m.position.set(x,y,z);
+  m.castShadow=true; m.receiveShadow=true; return m;
+}
+function cyl(rt,rb,h,seg,mat,rx=0,ry=0,rz=0,x=0,y=0,z=0){
+  const m=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg),mat);
+  m.rotation.set(rx,ry,rz); m.position.set(x,y,z);
+  m.castShadow=true; m.receiveShadow=true; return m;
+}
+function torus(r,tube,seg1,seg2,mat,rx=0,ry=0,rz=0,x=0,y=0,z=0){
+  const m=new THREE.Mesh(new THREE.TorusGeometry(r,tube,seg1,seg2),mat);
+  m.rotation.set(rx,ry,rz); m.position.set(x,y,z);
+  m.castShadow=true; return m;
+}
+function sphere(r,seg,mat,x=0,y=0,z=0){
+  const m=new THREE.Mesh(new THREE.SphereGeometry(r,seg,seg),mat);
+  m.position.set(x,y,z); m.castShadow=true; return m;
+}
+
+// ─── BARBERSHOP TOOLS ─────────────────────────────────────────
+
+/* === SCISSORS === */
+function makeScissors(){
+  const g=new THREE.Group();
+  // Blades
+  const b1=box(.05,1.1,.018,MAT.chrome,0,0, .22, .08, .28,0);
+  const b2=box(.05,1.1,.018,MAT.chrome,0,0,-.22,-.08, .28,0);
+  // Edge bevel highlight
+  const e1=box(.008,1.1,.005,MAT.steel,0,0, .22, .085, .28,.01);
+  const e2=box(.008,1.1,.005,MAT.steel,0,0,-.22,-.085, .28,.01);
+  // Rings
+  const r1=torus(.13,.028,16,40,MAT.gold,0,0,0, .22,-.42,0);
+  const r2=torus(.13,.028,16,40,MAT.gold,0,0,0,-.22,-.42,0);
+  // Inner rings
+  const ri1=torus(.09,.012,12,30,MAT.goldD,0,0,0, .22,-.42,.01);
+  const ri2=torus(.09,.012,12,30,MAT.goldD,0,0,0,-.22,-.42,.01);
+  // Pivot
+  const piv=cyl(.03,.03,.04,12,MAT.gold,Math.PI/2,0,0,0,.08,0);
+  const pivR=torus(.042,.008,8,20,MAT.goldD,Math.PI/2,0,0,0,.08,0);
+  // Tips (narrow points)
+  const t1=box(.02,.12,.014,MAT.steel,0,0, .22, .08, .84,0);
+  const t2=box(.02,.12,.014,MAT.steel,0,0,-.22,-.08, .84,0);
+  g.add(b1,b2,e1,e2,r1,r2,ri1,ri2,piv,pivR,t1,t2);
+  return g;
+}
+
+/* === CLIPPERS === */
+function makeClippers(){
+  const g=new THREE.Group();
+  // Main body
+  const body=box(.52,1.3,.38,MAT.black);
+  // Side panels
+  const sp1=box(.02,1.3,.36,MAT.darkM,0,0,0, .27,0,0);
+  const sp2=box(.02,1.3,.36,MAT.darkM,0,0,0,-.27,0,0);
+  // Front face
+  const ff=box(.52,.1,.38,MAT.chrome,0,0,0, 0,.65,0);
+  // Grip ridges
+  for(let i=0;i<7;i++){
+    const ridge=box(.54,.025,.36,MAT.darkM,0,0,0,0,-.55+i*.15,0);
+    g.add(ridge);
+  }
+  // Blade housing
+  const bh=box(.56,.18,.4,new THREE.MeshStandardMaterial({color:0x111111,metalness:.8,roughness:.2}),0,0,0,0,-.74,0);
+  // Blade
+  const blade=box(.50,.06,.36,MAT.chrome,0,0,0,0,-.84,0);
+  // Blade teeth (fine detail)
+  for(let i=0;i<18;i++){
+    const tooth=box(.015,.08,.032,MAT.steel,0,0,0,-.42+i*.047,-.91,.18);
+    g.add(tooth);
+  }
+  // On/off switch
+  const sw=box(.12,.06,.04,MAT.gold,0,0,0,0,.2,.21);
+  // Brand plate
+  const bp=box(.28,.06,.005,MAT.gold,0,0,0,0,.52,.2);
+  // Power cord nub
+  const cord=cyl(.04,.04,.12,10,MAT.darkM,Math.PI/2,0,0,0,-.72,-.15);
+  g.add(body,sp1,sp2,ff,bh,blade,sw,bp,cord);
+  return g;
+}
+
+/* === BARBER POLE === */
+function makeBarberPole(){
+  const g=new THREE.Group();
+  // Pole with custom spiral shader
+  const poleGeo=new THREE.CylinderGeometry(.14,.14,2.8,48,80,true);
+  const poleMat=new THREE.ShaderMaterial({
+    uniforms:{ uTime:{value:0} },
+    vertexShader:`
+      varying vec2 vUv;
+      void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }
+    `,
+    fragmentShader:`
+      varying vec2 vUv;
+      uniform float uTime;
+      void main(){
+        float s=mod(vUv.y*5.0+vUv.x*1.5-uTime*.4,1.0);
+        vec3 red=vec3(.88,.08,.08);
+        vec3 white=vec3(.96,.96,.96);
+        vec3 blue=vec3(.08,.18,.82);
+        vec3 col;
+        if(s<.33) col=red;
+        else if(s<.66) col=white;
+        else col=blue;
+        // Metallic sheen
+        float sheen=pow(abs(sin(vUv.x*3.14159)),.3)*.4;
+        col=mix(col,vec3(1.0),sheen);
+        gl_FragColor=vec4(col,1.0);
+      }
+    `,
+    side:THREE.FrontSide,
+  });
+  const pole=new THREE.Mesh(poleGeo,poleMat);
+  pole.castShadow=true;
+  // Pole glass tube
+  const glass=new THREE.Mesh(
+    new THREE.CylinderGeometry(.155,.155,2.8,32,1,false),
+    new THREE.MeshPhysicalMaterial({color:0xffffff,metalness:0,roughness:0,transmission:0.92,transparent:true,opacity:.15,side:THREE.BackSide})
+  );
+  // Top cap
+  const topCap=new THREE.Mesh(new THREE.SphereGeometry(.17,20,20,0,Math.PI*2,0,Math.PI/2),MAT.chrome);
+  topCap.position.y=1.4; topCap.castShadow=true;
+  // Bottom cap
+  const btmCap=new THREE.Mesh(new THREE.SphereGeometry(.17,20,20,0,Math.PI*2,Math.PI/2,Math.PI/2),MAT.chrome);
+  btmCap.position.y=-1.4; btmCap.castShadow=true;
+  // Ring borders
+  const ringT=torus(.17,.015,12,40,MAT.gold,Math.PI/2,0,0,0,1.4,0);
+  const ringB=torus(.17,.015,12,40,MAT.gold,Math.PI/2,0,0,0,-1.4,0);
+  const ringM=torus(.155,.01,8,32,MAT.chrome,Math.PI/2,0,0,0,0,0);
+  // Base
+  const base=cyl(.22,.28,.18,20,MAT.chrome,0,0,0,0,-1.5,0);
+  g.add(pole,glass,topCap,btmCap,ringT,ringB,ringM,base);
+  g._poleMat=poleMat;
+  return g;
+}
+
+/* === STRAIGHT RAZOR === */
+function makeRazor(){
+  const g=new THREE.Group();
+  // Blade (open position)
+  const blade=box(.07,1.05,.014,MAT.chrome,0,0,.45,.2,.1,0);
+  // Spine of blade
+  const spine=box(.02,1.05,.02,MAT.steel,0,0,.45,.165,.1,.01);
+  // Sharpened edge highlight
+  const edge=box(.005,1.05,.004,new THREE.MeshStandardMaterial({color:0xffffff,metalness:1,roughness:0,emissive:0x888888,emissiveIntensity:.3}),0,0,.45,.24,.1,-.01);
+  // Handle (two scales)
+  const h1=box(.06,.92,.022,new THREE.MeshStandardMaterial({color:0x1a0a00,metalness:.1,roughness:.8}),0,0,0,-.06,-.14,0);
+  const h2=box(.06,.92,.022,new THREE.MeshStandardMaterial({color:0x1a0a00,metalness:.1,roughness:.8}),0,0,0,-.06,-.14,.032);
+  // Pivot pin
+  const pin=cyl(.018,.018,.08,10,MAT.gold,Math.PI/2,0,0,-.06,.34,0);
+  // Decorative pins
+  const pin2=cyl(.012,.012,.08,8,MAT.gold,Math.PI/2,0,0,-.06,0,0);
+  const pin3=cyl(.012,.012,.08,8,MAT.gold,Math.PI/2,0,0,-.06,-.4,0);
+  // Tip of blade
+  const tip=new THREE.Mesh(new THREE.ConeGeometry(.035,.08,8),MAT.chrome);
+  tip.rotation.z=Math.PI/2+.45; tip.position.set(.24,.58,0); tip.castShadow=true;
+  g.add(blade,spine,edge,h1,h2,pin,pin2,pin3,tip);
+  return g;
+}
+
+/* === PROFESSIONAL COMB === */
+function makeComb(){
+  const g=new THREE.Group();
+  // Spine
+  const spine=box(.82,.12,.018,MAT.amber);
+  // Wide teeth (left half)
+  for(let i=0;i<9;i++){
+    const t=box(.018,.18,.016,MAT.amber,0,0,0,-0.35+i*.05,-.155,0);
+    g.add(t);
+  }
+  // Fine teeth (right half)
+  for(let i=0;i<15;i++){
+    const t=box(.011,.16,.016,MAT.amber,0,0,0,.075+i*.03,-.14,0);
+    g.add(t);
+  }
+  // Divider
+  const div=box(.014,.12,.018,MAT.goldD,0,0,0,.06,-.15,0);
+  g.add(spine,div);
+  return g;
+}
+
+/* === BRUSH === */
+function makeBrush(){
+  const g=new THREE.Group();
+  // Handle
+  const handle=cyl(.055,.07,.8,16,MAT.darkM,0,0,0,0,.1,0);
+  const neck=cyl(.042,.055,.12,14,MAT.darkM,0,0,0,0,-.46,0);
+  const handleTop=sphere(.06,14,MAT.chrome,0,.54,0);
+  const ring1=torus(.07,.008,10,30,MAT.gold,Math.PI/2,0,0,0,.2,0);
+  const ring2=torus(.07,.008,10,30,MAT.gold,Math.PI/2,0,0,0,-.15,0);
+  // Brush head
+  const head=box(.18,.22,.12,new THREE.MeshStandardMaterial({color:0x8a6634,metalness:.05,roughness:.9}),0,0,0,0,-.6,0);
+  // Bristles (layered boxes)
+  for(let i=0;i<4;i++){
+    for(let j=0;j<3;j++){
+      const bristle=box(.018,.18,.018,new THREE.MeshStandardMaterial({color:0x1a1008,metalness:0,roughness:1}),0,0,0,-0.07+j*.07,-0.78+0,i*.003-.06+i*.002);
+      g.add(bristle);
+    }
+  }
+  // Ferrule (metal band)
+  const ferrule=cyl(.1,.1,.06,16,MAT.chrome,0,0,0,0,-.49,0);
+  g.add(handle,neck,handleTop,ring1,ring2,head,ferrule);
+  return g;
+}
+
+/* === SPRAY BOTTLE === */
+function makeSpray(){
+  const g=new THREE.Group();
+  const bodyMat=new THREE.MeshPhysicalMaterial({color:0x112244,metalness:.1,roughness:.2,transmission:.5,transparent:true,opacity:.8});
+  const body=cyl(.09,.11,.7,20,bodyMat,0,0,0,0,0,0);
+  const shoulder=new THREE.Mesh(new THREE.SphereGeometry(.09,16,8,0,Math.PI*2,0,Math.PI/2),bodyMat);
+  shoulder.position.y=.35;
+  const neck=cyl(.04,.09,.1,14,bodyMat,0,0,0,0,.42,0);
+  const cap=cyl(.06,.06,.1,14,MAT.chrome,0,0,0,0,.52,0);
+  // Trigger
+  const trig=box(.025,.14,.04,MAT.chrome,-.4,0,0,.07,.35,.09);
+  const trigBase=box(.025,.04,.04,MAT.chrome,0,0,0,.07,.29,.09);
+  // Nozzle
+  const nozzle=cyl(.015,.015,.18,8,MAT.chrome,-.55,0,0,.05,.5,.06);
+  // Water level line
+  const level=cyl(.092,.092,.004,20,new THREE.MeshStandardMaterial({color:0x4488ff,metalness:0,roughness:.5}),0,0,0,0,-.05,0);
+  g.add(body,shoulder,neck,cap,trig,trigBase,nozzle,level);
+  return g;
+}
+
+// ─── CREATE & POSITION TOOLS ──────────────────────────────────
+const scissors = makeScissors();
+scissors.position.set(-3.2, 0.8, 0);
+scissors.rotation.set(.1, .3, -.15);
+scissors.scale.setScalar(1.0);
+
+const clippers = makeClippers();
+clippers.position.set(3.0, 0.5, -0.5);
+clippers.rotation.set(-.1, -.4, .12);
+clippers.scale.setScalar(0.85);
+
+const pole = makeBarberPole();
+pole.position.set(0, 0.2, -1.5);
+pole.scale.setScalar(0.9);
+
+const razor = makeRazor();
+razor.position.set(-1.8, -1.4, 1.2);
+razor.rotation.set(.2, .5, .3);
+razor.scale.setScalar(0.9);
+
+const comb = makeComb();
+comb.position.set(2.2, -1.6, 0.8);
+comb.rotation.set(.1, -.3, .2);
+comb.scale.setScalar(1.1);
+
+const brush = makeBrush();
+brush.position.set(3.8, -0.4, 0.5);
+brush.rotation.set(.2, .2, -.3);
+brush.scale.setScalar(1.0);
+
+const spray = makeSpray();
+spray.position.set(-3.8, -0.6, 0);
+spray.rotation.set(.1, .5, .15);
+spray.scale.setScalar(0.9);
+
+// Tool labels for hover
+const toolMetas = [
+  { obj: scissors, label: 'TIJERAS PROFESIONALES' },
+  { obj: clippers, label: 'CLIPPERS WAHL' },
+  { obj: pole,     label: 'POSTE BARBERO' },
+  { obj: razor,    label: 'NAVAJA CLÁSICA' },
+  { obj: comb,     label: 'PEINE DE PRECISIÓN' },
+  { obj: brush,    label: 'BROCHA DE CUELLO' },
+  { obj: spray,    label: 'SPRAY PROFESIONAL' },
+];
+toolMetas.forEach(t=>scene.add(t.obj));
+
+// ─── PARTICLES (gold dust) ────────────────────────────────────
+const PCOUNT = 3500;
+const pGeo = new THREE.BufferGeometry();
+const pPos = new Float32Array(PCOUNT*3);
+const pRnd = new Float32Array(PCOUNT);
+const pSpd = new Float32Array(PCOUNT);
+for(let i=0;i<PCOUNT;i++){
+  pPos[i*3]   = (Math.random()-.5)*28;
+  pPos[i*3+1] = (Math.random()-.5)*16;
+  pPos[i*3+2] = (Math.random()-.5)*14;
+  pRnd[i] = Math.random();
+  pSpd[i] = Math.random()*.5+.1;
+}
+pGeo.setAttribute('position',new THREE.BufferAttribute(pPos,3));
+pGeo.setAttribute('aRnd',new THREE.BufferAttribute(pRnd,1));
+pGeo.setAttribute('aSpd',new THREE.BufferAttribute(pSpd,1));
+const pMat = new THREE.ShaderMaterial({
+  uniforms:{ uTime:{value:0}, uGold:{value:new THREE.Color('#c9a84c')}, uWhite:{value:new THREE.Color('#f0ede8')} },
+  vertexShader:`
+    attribute float aRnd; attribute float aSpd;
+    uniform float uTime;
+    varying float vRnd; varying float vA;
+    void main(){
+      vRnd=aRnd;
+      vec3 p=position;
+      p.y+=sin(uTime*aSpd*.25+aRnd*6.28)*.5;
+      p.x+=cos(uTime*aSpd*.18+aRnd*6.28)*.35;
+      p.y=mod(p.y+8.0,16.0)-8.0;
+      vec4 mv=modelViewMatrix*vec4(p,1.0);
+      gl_PointSize=mix(.8,2.5,aRnd)*(280.0/-mv.z);
+      gl_Position=projectionMatrix*mv;
+      vA=smoothstep(7.0,2.0,abs(p.z));
+    }
+  `,
+  fragmentShader:`
+    uniform vec3 uGold; uniform vec3 uWhite;
+    varying float vRnd; varying float vA;
+    void main(){
+      vec2 uv=gl_PointCoord-.5;
+      float d=length(uv); if(d>.5) discard;
+      float glow=1.0-smoothstep(0.0,.5,d);
+      vec3 col=mix(uWhite,uGold,step(.55,vRnd));
+      gl_FragColor=vec4(col,glow*vA*mix(.1,.6,vRnd));
+    }
+  `,
+  transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
+});
+const particles = new THREE.Points(pGeo,pMat);
+scene.add(particles);
+
+// ─── RAYCASTER FOR HOVER ──────────────────────────────────────
+const raycaster = new THREE.Raycaster();
+const mouseNDC  = new THREE.Vector2();
+const toolLabel = document.getElementById('tool-label');
+const allMeshes = [];
+toolMetas.forEach(t=>{
+  t.obj.traverse(c=>{ if(c.isMesh){ c.userData.toolGroup=t.obj; c.userData.toolLabel=t.label; allMeshes.push(c); }});
+});
+
+// ─── MOUSE ────────────────────────────────────────────────────
+const mouse={x:.5,y:.5};
+document.addEventListener('mousemove',e=>{
+  mouse.x=e.clientX/innerWidth;
+  mouse.y=e.clientY/innerHeight;
+  mouseNDC.x=(e.clientX/innerWidth)*2-1;
+  mouseNDC.y=-(e.clientY/innerHeight)*2+1;
+  mouseLight.position.set((mouse.x-.5)*8,(-(mouse.y-.5))*5,7);
+  toolLabel.style.left=e.clientX+'px';
+  toolLabel.style.top=e.clientY+'px';
+});
+
+let scrollY=0;
+window.addEventListener('scroll',()=>scrollY=window.scrollY);
+
+window.addEventListener('resize',()=>{
+  renderer.setSize(innerWidth,innerHeight);
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+// ─── ANIMATION DATA ───────────────────────────────────────────
+const floats = [
+  { obj:scissors, base:scissors.position.clone(), freq:.4, amp:.18, rotSpd:{x:.003,y:.006,z:.002} },
+  { obj:clippers, base:clippers.position.clone(), freq:.3, amp:.22, rotSpd:{x:.002,y:.005,z:.003} },
+  { obj:pole,     base:pole.position.clone(),     freq:.2, amp:.12, rotSpd:{x:0,y:.01,z:0} },
+  { obj:razor,    base:razor.position.clone(),     freq:.5, amp:.2,  rotSpd:{x:.004,y:.007,z:.003} },
+  { obj:comb,     base:comb.position.clone(),     freq:.35, amp:.15, rotSpd:{x:.002,y:.008,z:.004} },
+  { obj:brush,    base:brush.position.clone(),     freq:.45, amp:.17, rotSpd:{x:.003,y:.006,z:.002} },
+  { obj:spray,    base:spray.position.clone(),     freq:.28, amp:.2,  rotSpd:{x:.002,y:.005,z:.003} },
+];
+
+// ─── RENDER LOOP ──────────────────────────────────────────────
+const clock = new THREE.Clock();
+let lastHit=null;
+
+function animate(){
+  requestAnimationFrame(animate);
+  const t=clock.getElapsedTime();
+
+  // Particles
+  pMat.uniforms.uTime.value=t;
+  particles.rotation.y=t*.025;
+
+  // Pole shader
+  if(pole._poleMat) pole._poleMat.uniforms.uTime.value=t;
+
+  // Floating tools
+  const mx2=(mouse.x-.5)*.5;
+  const my2=(mouse.y-.5)*.35;
+  floats.forEach((f,i)=>{
+    const phase=i*1.1;
+    f.obj.position.x=f.base.x+Math.sin(t*f.freq+phase)*.08+mx2*.3;
+    f.obj.position.y=f.base.y+Math.sin(t*f.freq*1.3+phase)*f.amp-my2*.2;
+    f.obj.position.z=f.base.z+Math.cos(t*f.freq*.7+phase)*.06;
+    f.obj.rotation.x+=f.rotSpd.x;
+    f.obj.rotation.y+=f.rotSpd.y;
+    f.obj.rotation.z+=f.rotSpd.z;
+  });
+
+  // Camera drift
+  camera.position.x+=(mx2*1.5-camera.position.x)*.025;
+  camera.position.y+=(-my2*.8-.5-camera.position.y)*.025;
+  camera.position.y-=scrollY*.0008;
+  camera.lookAt(0,.5,0);
+
+  // Pole glow pulse
+  poleGlow.intensity=6+Math.sin(t*3)*3;
+
+  // Raycaster hover
+  raycaster.setFromCamera(mouseNDC,camera);
+  const hits=raycaster.intersectObjects(allMeshes,false);
+  if(hits.length>0){
+    const hit=hits[0].object;
+    if(hit!==lastHit){
+      lastHit=hit;
+      toolLabel.textContent=hit.userData.toolLabel;
+      toolLabel.style.opacity='1';
+    }
+  } else {
+    if(lastHit){ lastHit=null; toolLabel.style.opacity='0'; }
+  }
+
+  renderer.render(scene,camera);
+}
+animate();
+
+// ─── HORARIO REAL ─────────────────────────────────────────────
+(function(){
+  const badge=document.getElementById('status-badge');
+  const now=new Date(new Date().toLocaleString('en-US',{timeZone:'America/Monterrey'}));
+  const d=now.getDay(), h=now.getHours()+now.getMinutes()/60;
+  const open=(d>=1&&d<=6&&h>=10&&h<20)||(d===0&&h>=10&&h<16);
+  if(open){
+    badge.textContent='Abierto ahora'; badge.classList.add('open');
+  } else {
+    badge.textContent='Cerrado ahora'; badge.classList.add('closed');
+    const s=document.createElement('style');
+    s.textContent='#status-badge.closed::before{background:#e05252!important}';
+    document.head.appendChild(s);
+  }
+})();
+
+// ─── SCROLL REVEAL ────────────────────────────────────────────
+const io=new IntersectionObserver(entries=>{
+  entries.forEach(e=>{ if(e.isIntersecting) e.target.classList.add('vis'); });
+},{threshold:.12});
+document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+</script>
+</body>
+</html>

@@ -1,0 +1,89 @@
+name: Boletín Judicial Jalisco
+
+on:
+  schedule:
+    # 11pm hora México (UTC-6) = 05:00 UTC del día siguiente
+    - cron: '0 5 * * 2-6'   # Mar–Sab (cubre Lun–Vie en México)
+  workflow_dispatch:         # Permite ejecutar manualmente desde GitHub
+
+jobs:
+  scraper-y-alertas:
+    name: Scraper + Matching + Alertas
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: scripts/package-lock.json
+
+      - name: Instalar dependencias
+        working-directory: scripts
+        run: npm install
+
+      - name: Instalar browsers de Playwright
+        working-directory: scripts
+        run: npx playwright install chromium --with-deps
+
+      - name: Ejecutar Scraper (intento 1)
+        id: scraper
+        working-directory: scripts
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          node scraper.js
+          echo "scraper_ok=true" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Reintento 2 (si falló)
+        if: steps.scraper.outputs.scraper_ok != 'true'
+        working-directory: scripts
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          echo "Esperando 5 minutos antes del reintento 2..."
+          sleep 300
+          node scraper.js
+          echo "scraper_ok=true" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Reintento 3 (si falló)
+        if: steps.scraper.outputs.scraper_ok != 'true'
+        working-directory: scripts
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          echo "Esperando 5 minutos antes del reintento 3..."
+          sleep 300
+          node scraper.js
+
+      - name: Ejecutar Matcher y Enviar Alertas
+        id: matcher
+        working-directory: scripts
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          RESEND_API_KEY:       ${{ secrets.RESEND_API_KEY }}
+          FROM_EMAIL:           ${{ secrets.FROM_EMAIL }}
+          APP_URL:              ${{ secrets.APP_URL }}
+        run: node matcher.js
+
+      - name: Resumen del job
+        if: always()
+        run: |
+          echo "### Boletín Judicial Jalisco — $(date '+%Y-%m-%d')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Métrica | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Acuerdos scrapeados | ${{ steps.scraper.outputs.acuerdos_scrapeados || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Matches encontrados | ${{ steps.matcher.outputs.matches || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Emails enviados     | ${{ steps.matcher.outputs.emails_enviados || 'N/A' }} |" >> $GITHUB_STEP_SUMMARY
