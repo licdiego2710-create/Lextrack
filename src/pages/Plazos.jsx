@@ -1,10 +1,62 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import { fmtFecha } from '../utils/helpers'
 import PageHeader from '../components/ui/PageHeader'
+import { useOrg } from '../context/OrgContext'
+import { useToast } from '../context/ToastContext'
+import Modal from '../components/ui/Modal'
 
 const DIAS_SEM = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
-const FESTIVOS = ['01-01', '02-05', '03-21', '05-01', '09-16', '11-20', '12-25']
+
+// Función para obtener festivos variables de Ley Federal del Trabajo en México (Lunes largos)
+function getShiftedHolidays(year) {
+  const holidays = []
+
+  // 1. Primer lunes de febrero (Aniversario de la Constitución - 5 Feb)
+  for (let d = 1; d <= 7; d++) {
+    const date = new Date(year, 1, d) // 1 = Febrero
+    if (date.getDay() === 1) { // 1 = Lunes
+      holidays.push(`02-${String(d).padStart(2, '0')}`)
+      break
+    }
+  }
+
+  // 2. Tercer lunes de marzo (Natalicio de Benito Juárez - 21 Mar)
+  for (let d = 15; d <= 21; d++) {
+    const date = new Date(year, 2, d) // 2 = Marzo
+    if (date.getDay() === 1) {
+      holidays.push(`03-${String(d).padStart(2, '0')}`)
+      break
+    }
+  }
+
+  // 3. Tercer lunes de noviembre (Aniversario de la Revolución - 20 Nov)
+  for (let d = 15; d <= 21; d++) {
+    const date = new Date(year, 10, d) // 10 = Noviembre
+    if (date.getDay() === 1) {
+      holidays.push(`11-${String(d).padStart(2, '0')}`)
+      break
+    }
+  }
+
+  return holidays
+}
+
+function esFestivoNacional(d) {
+  const year = d.getFullYear()
+  const mmdd = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  
+  // Festivos fijos en México
+  const fijos = ['01-01', '05-01', '09-16', '12-25']
+  
+  // Transmisión del Poder Ejecutivo Federal (cada 6 años a partir del 2024, el 1 de Octubre)
+  if ((year - 2024) % 6 === 0) {
+    fijos.push('10-01')
+  }
+
+  const movibles = getShiftedHolidays(year)
+  return fijos.includes(mmdd) || movibles.includes(mmdd)
+}
 
 const PREDEFS = [
   ['Recurso de revocación', 3, 'hábiles'],
@@ -24,11 +76,11 @@ const PREDEFS = [
 ]
 
 export default function Plazos() {
+  const { org } = useOrg()
+  const toast = useToast()
   const [fecha, setFecha] = useState('')
   const [custom, setCustom] = useState([])
-  const [inhabiles, setInhabiles] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('lextrack_inhabiles') || '[]') } catch { return [] }
-  })
+  const [inhabiles, setInhabiles] = useState([])
   const [nuevoInh, setNuevoInh] = useState({ fecha: '', nota: '' })
   const [mostrarInh, setMostrarInh] = useState(false)
   const [mostrarImport, setMostrarImport] = useState(false)
@@ -37,15 +89,120 @@ export default function Plazos() {
   const [procesandoImagen, setProcesandoImagen] = useState(false)
   const [imagenPreview, setImagenPreview] = useState(null)
 
-  function saveInhabiles(lista) {
-    setInhabiles(lista)
-    localStorage.setItem('lextrack_inhabiles', JSON.stringify(lista))
+  // Estados para vincular términos a expedientes
+  const [expedientes, setExpedientes] = useState([])
+  const [expSeleccionado, setExpSeleccionado] = useState('')
+  const [vinculandoPlazo, setVinculandoPlazo] = useState(null)
+
+  useEffect(() => {
+    if (!org?.id) return
+    async function loadInhabiles() {
+      const { data, error } = await supabase
+        .from('dias_inhabiles')
+        .select('fecha, nota')
+        .eq('despacho_id', org.id)
+        .order('fecha', { ascending: true })
+
+      if (!error && data) {
+        setInhabiles(data)
+      }
+    }
+    async function loadExpedientes() {
+      const { data, error } = await supabase
+        .from('expedientes')
+        .select('id, num, actor, demandado')
+        .eq('despacho_id', org.id)
+        .in('estado', ['Activo', 'activo', 'ACTIVO'])
+        .order('num', { ascending: true })
+
+      if (!error && data) {
+        setExpedientes(data)
+      }
+    }
+    loadInhabiles()
+    loadExpedientes()
+  }, [org?.id])
+
+  async function registrarLog(accion, detalles) {
+    if (!org?.id) return
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.user) {
+        await supabase.from('bitacora_actividad').insert({
+          despacho_id: org.id,
+          user_id: session.user.id,
+          user_email: session.user.email,
+          accion,
+          detalles
+        })
+      }
+    } catch (err) {
+      console.error('Error al registrar log:', err)
+    }
   }
-  function agregarInhabil() {
-    if (!nuevoInh.fecha) return
+
+  async function confirmarVinculacion() {
+    if (!org?.id || !expSeleccionado || !vinculandoPlazo) return
+
+    const { error } = await supabase
+      .from('expedientes')
+      .update({
+        termino: vinculandoPlazo.fecha,
+        actuacion: `[Término Procesal] ${vinculandoPlazo.label}`,
+        actualizado_en: new Date().toISOString()
+      })
+      .eq('id', expSeleccionado)
+
+    if (error) {
+      toast.show('Error al vincular término: ' + error.message, 'danger')
+    } else {
+      toast.show('Término vinculado exitosamente', 'success')
+      
+      // Registrar actuación en el historial
+      await supabase
+        .from('actuaciones')
+        .insert({
+          expediente_id: expSeleccionado,
+          descripcion: `Se fijó el término: ${vinculandoPlazo.label} con fecha de vencimiento al ${fmtFecha(vinculandoPlazo.fecha)}`,
+          fecha: new Date().toISOString().slice(0, 10),
+          user_id: (await supabase.auth.getUser()).data.user?.id || org.owner_id,
+          despacho_id: org.id
+        })
+
+      // Registrar log de actividad
+      const exp = expedientes.find(e => e.id === expSeleccionado)
+      const expNum = exp ? exp.num : 'Desconocido'
+      await registrarLog('vincular_plazo', `Vinculó el término "${vinculandoPlazo.label}" (${fmtFecha(vinculandoPlazo.fecha)}) al expediente ${expNum}`)
+
+      setVinculandoPlazo(null)
+      setExpSeleccionado('')
+    }
+  }
+
+  async function agregarInhabil() {
+    if (!nuevoInh.fecha || !org?.id) return
     if (inhabiles.some(i => i.fecha === nuevoInh.fecha)) { alert('Esa fecha ya está registrada.'); return }
-    saveInhabiles([...inhabiles, { fecha: nuevoInh.fecha, nota: nuevoInh.nota }].sort((a, b) => a.fecha.localeCompare(b.fecha)))
-    setNuevoInh({ fecha: '', nota: '' })
+
+    const { data, error } = await supabase
+      .from('dias_inhabiles')
+      .insert({
+        despacho_id: org.id,
+        fecha: nuevoInh.fecha,
+        nota: nuevoInh.nota || null
+      })
+      .select('fecha, nota')
+      .single()
+
+    if (error) {
+      alert('Error al agregar fecha: ' + error.message)
+    } else if (data) {
+      setInhabiles(prev => [...prev, data].sort((a, b) => a.fecha.localeCompare(b.fecha)))
+      
+      // Registrar log de actividad
+      await registrarLog('agregar_dia_inhabil', `Agregó el día inhábil ${fmtFecha(data.fecha)}${data.nota ? ` (${data.nota})` : ''}`)
+      
+      setNuevoInh({ fecha: '', nota: '' })
+    }
   }
   function parsearLineas(texto) {
     return texto.split(/[\n]+/).map(l => l.trim()).filter(Boolean).reduce((acc, linea) => {
@@ -91,18 +248,80 @@ export default function Plazos() {
     }
     setProcesandoImagen(false)
   }
-  function confirmarImportCalendario() {
+  async function confirmarImportCalendario() {
+    if (!org?.id) return
     const nuevas = previewInh.filter(p => p.fecha && !inhabiles.some(i => i.fecha === p.fecha))
     const omitidas = previewInh.length - nuevas.length
-    saveInhabiles([...inhabiles, ...nuevas].sort((a, b) => a.fecha.localeCompare(b.fecha)))
-    setTextoCalendario(''); setPreviewInh([]); setMostrarImport(false)
-    alert(`${nuevas.length} fecha(s) importada(s).${omitidas ? ` ${omitidas} ya existían.` : ''}`)
+    if (!nuevas.length) {
+      setTextoCalendario(''); setPreviewInh([]); setMostrarImport(false)
+      alert(`No hay fechas nuevas que importar.${omitidas ? ` ${omitidas} ya existían.` : ''}`)
+      return
+    }
+
+    const payload = nuevas.map(p => ({
+      despacho_id: org.id,
+      fecha: p.fecha,
+      nota: p.nota || null
+    }))
+
+    const { data, error } = await supabase
+      .from('dias_inhabiles')
+      .insert(payload)
+      .select('fecha, nota')
+
+    if (error) {
+      alert('Error al importar fechas: ' + error.message)
+    } else if (data) {
+      setInhabiles(prev => [...prev, ...data].sort((a, b) => a.fecha.localeCompare(b.fecha)))
+      
+      // Registrar log de actividad
+      await registrarLog('importar_dias_inhabiles', `Importó ${data.length} días inhábiles al calendario`)
+
+      setTextoCalendario(''); setPreviewInh([]); setMostrarImport(false)
+      alert(`${nuevas.length} fecha(s) importada(s).${omitidas ? ` ${omitidas} ya existían.` : ''}`)
+    }
   }
+
+  async function eliminarInhabil(fechaVal) {
+    if (!org?.id) return
+    const { error } = await supabase
+      .from('dias_inhabiles')
+      .delete()
+      .eq('despacho_id', org.id)
+      .eq('fecha', fechaVal)
+
+    if (error) {
+      alert('Error al eliminar fecha: ' + error.message)
+    } else {
+      setInhabiles(prev => prev.filter(x => x.fecha !== fechaVal))
+      
+      // Registrar log de actividad
+      await registrarLog('eliminar_dia_inhabil', `Eliminó el día inhábil ${fmtFecha(fechaVal)}`)
+    }
+  }
+
+  async function eliminarTodos() {
+    if (!org?.id) return
+    if (!confirm(`¿Eliminar los ${inhabiles.length} días?`)) return
+    const { error } = await supabase
+      .from('dias_inhabiles')
+      .delete()
+      .eq('despacho_id', org.id)
+
+    if (error) {
+      alert('Error al vaciar fechas: ' + error.message)
+    } else {
+      setInhabiles([])
+      
+      // Registrar log de actividad
+      await registrarLog('vaciar_dias_inhabiles', `Eliminó todos los días inhábiles`)
+    }
+  }
+
   function esHabil(d) {
     const dow = d.getDay()
-    const mmdd = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     const fStr = d.toISOString().slice(0, 10)
-    return dow !== 0 && dow !== 6 && !FESTIVOS.includes(mmdd) && !inhabiles.some(i => i.fecha === fStr)
+    return dow !== 0 && dow !== 6 && !esFestivoNacional(d) && !inhabiles.some(i => i.fecha === fStr)
   }
   function calcular(base, dias, tipo) {
     if (!base || !dias) return null
@@ -117,12 +336,11 @@ export default function Plazos() {
     if (!res) return null
     const resStr = res.toISOString().slice(0, 10)
     const dow = res.getDay()
-    const mmdd = `${String(res.getMonth() + 1).padStart(2, '0')}-${String(res.getDate()).padStart(2, '0')}`
     const inhReg = inhabiles.find(i => i.fecha === resStr)
-    const esFest = FESTIVOS.includes(mmdd)
+    const esFest = esFestivoNacional(res)
     const esFinSem = dow === 0 || dow === 6
     const warn = esFinSem || esFest || !!inhReg
-    const warnLbl = esFest ? 'Festivo federal' : esFinSem ? 'Fin de semana' : inhReg ? `Inhábil CJE${inhReg.nota ? ` · ${inhReg.nota}` : ''}` : ''
+    const warnLbl = esFest ? 'Festivo federal LFT' : esFinSem ? 'Fin de semana' : inhReg ? `Inhábil CJE${inhReg.nota ? ` · ${inhReg.nota}` : ''}` : ''
     return (
       <div style={{
         background: 'var(--surface)',
@@ -135,9 +353,23 @@ export default function Plazos() {
           <div style={{ fontSize: 12, color: 'var(--text)', fontWeight: 600, marginBottom: 2 }}>{label}</div>
           <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{dias} días {tipo}</div>
         </div>
-        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: warn ? 'var(--warning)' : 'var(--primary)' }}>{fmtFecha(resStr)}</div>
-          <div style={{ fontSize: 11, color: warn ? 'var(--warning)' : 'var(--text-muted)' }}>{DIAS_SEM[dow]}{warn ? ` · ${warnLbl}` : ''}</div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: warn ? 'var(--warning)' : 'var(--primary)' }}>{fmtFecha(resStr)}</div>
+            <div style={{ fontSize: 11, color: warn ? 'var(--warning)' : 'var(--text-muted)' }}>{DIAS_SEM[dow]}{warn ? ` · ${warnLbl}` : ''}</div>
+          </div>
+          <button
+            onClick={() => setVinculandoPlazo({ label, fecha: resStr })}
+            style={{
+              background: 'none', border: 'none', color: 'var(--primary)',
+              fontSize: 11, fontWeight: 600, cursor: 'pointer', padding: 0,
+              textDecoration: 'none'
+            }}
+            onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+            onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+          >
+            🔗 Vincular
+          </button>
         </div>
         {onRemove && <button onClick={onRemove} style={btnDanger}>×</button>}
       </div>
@@ -283,11 +515,11 @@ export default function Plazos() {
                           {new Date(i.fecha + 'T00:00:00').toLocaleDateString('es-MX', { weekday: 'long' })}
                           {i.nota && <span style={{ color: 'var(--text)' }}> · {i.nota}</span>}
                         </span>
-                        <button style={btnDanger} onClick={() => saveInhabiles(inhabiles.filter(x => x.fecha !== i.fecha))}>×</button>
+                        <button style={btnDanger} onClick={() => eliminarInhabil(i.fecha)}>×</button>
                       </div>
                     ))}
                   </div>
-                  <button style={{ ...btnDanger, marginTop: 10, fontSize: 11 }} onClick={() => { if (confirm(`¿Eliminar los ${inhabiles.length} días?`)) saveInhabiles([]) }}>Borrar todos</button>
+                  <button style={{ ...btnDanger, marginTop: 10, fontSize: 11 }} onClick={eliminarTodos}>Borrar todos</button>
                 </>
               )}
           </div>
@@ -324,7 +556,24 @@ export default function Plazos() {
                 const r = calcular(fecha, c.dias, c.tipo)
                 const rs = r.toISOString().slice(0, 10)
                 const dw = r.getDay()
-                return <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--primary)', whiteSpace: 'nowrap' }}>{fmtFecha(rs)} <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{DIAS_SEM[dw]}</span></span>
+                return (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto', flexShrink: 0 }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--primary)', whiteSpace: 'nowrap' }}>
+                      {fmtFecha(rs)} <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{DIAS_SEM[dw]}</span>
+                    </span>
+                    <button
+                      onClick={() => setVinculandoPlazo({ label: c.label || 'Término Personalizado', fecha: rs })}
+                      style={{
+                        background: 'none', border: 'none', color: 'var(--primary)',
+                        fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0,
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+                      onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+                    >
+                      🔗 Vincular
+                    </button>
+                  </div>
+                )
               })()}
               <button style={btnDanger} onClick={() => setCustom(a => a.filter((_, j) => j !== i))}>×</button>
             </div>
@@ -336,9 +585,54 @@ export default function Plazos() {
             borderRadius: 'var(--radius)', padding: '10px 14px',
           }}>
             Los plazos en amarillo caen en fin de semana, festivo federal o día inhábil registrado.<br/>
-            Festivos federales fijos: 1 Ene · 5 Feb · 21 Mar · 1 May · 16 Sep · 20 Nov · 25 Dic
+            Festivos federales y de descanso obligatorio (LFT): Año Nuevo, Primero de Mayo, Independencia, Navidad, Transmisión Presidencial (1 Oct cada 6 años) y los fines de semana largos conmemorativos (Constitución, Benito Juárez y Revolución Mexicana) aplicados al día lunes correspondiente.
           </div>
         </>
+      )}
+
+      {vinculandoPlazo && (
+        <Modal
+          open={!!vinculandoPlazo}
+          title="Vincular término a expediente"
+          subtitle={`Se asignará el término "${vinculandoPlazo.label}" con vencimiento el ${fmtFecha(vinculandoPlazo.fecha)}.`}
+          onClose={() => { setVinculandoPlazo(null); setExpSeleccionado('') }}
+          footer={
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button style={btnSec} onClick={() => { setVinculandoPlazo(null); setExpSeleccionado('') }}>Cancelar</button>
+              <button style={btnPri} disabled={!expSeleccionado} onClick={confirmarVinculacion}>Vincular</button>
+            </div>
+          }
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <div style={smallLabel}>Seleccionar Expediente Activo</div>
+              {expedientes.length === 0 ? (
+                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No tienes expedientes activos registrados.</div>
+              ) : (
+                <select
+                  style={{ ...inputStyle, width: '100%', marginTop: 4 }}
+                  value={expSeleccionado}
+                  onChange={e => setExpSeleccionado(e.target.value)}
+                >
+                  <option value="">-- Selecciona un expediente --</option>
+                  {expedientes.map(e => (
+                    <option key={e.id} value={e.id}>
+                      {e.num} {e.actor ? `(Actor: ${e.actor})` : ''} {e.demandado ? `vs ${e.demandado}` : ''}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div>
+              <div style={smallLabel}>Descripción del término</div>
+              <input
+                style={{ ...inputStyle, width: '100%', marginTop: 4 }}
+                value={vinculandoPlazo.label}
+                onChange={e => setVinculandoPlazo(prev => ({ ...prev, label: e.target.value }))}
+              />
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   )

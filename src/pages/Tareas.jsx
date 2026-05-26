@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '../supabaseClient'
+import { useOrg } from '../context/OrgContext'
 import { useToast } from '../context/ToastContext'
-import { diasHasta, fmtFecha, urgencyColor } from '../utils/helpers'
+import { diasHasta, fmtFecha, urgencyColor, iniciales, exportarCSV } from '../utils/helpers'
 import StatusBadge from '../components/ui/StatusBadge'
 import Modal from '../components/ui/Modal'
 import PageHeader from '../components/ui/PageHeader'
@@ -16,10 +17,12 @@ const ESTADO_COLOR = {
   Vencida: 'var(--danger)',
 }
 
-const FORM_VACIO = { titulo: '', descripcion: '', expediente: '', responsable: '', fecha_limite: '', prioridad: 'Normal', estado: 'Pendiente' }
+const FORM_VACIO = { titulo: '', descripcion: '', expediente: '', responsable: '', fecha_limite: '', prioridad: 'Normal', estado: 'Pendiente', asignado_a: '' }
 
 export default function Tareas({ session }) {
+  const { org } = useOrg()
   const [tareas, setTareas] = useState([])
+  const [miembros, setMiembros] = useState([]) // miembros del despacho para asignar
   const [loading, setLoading] = useState(true)
   const [vista, setVista] = useState('lista')
   const [modal, setModal] = useState(false)
@@ -28,6 +31,7 @@ export default function Tareas({ session }) {
   const [saving, setSaving] = useState(false)
   const toast = useToast()
   const [filtroEstado, setFiltroEstado] = useState('Todos')
+  const [filtroAsignado, setFiltroAsignado] = useState('Todos')
 
   const cargar = useCallback(async () => {
     if (!session) return
@@ -39,6 +43,20 @@ export default function Tareas({ session }) {
     setTareas(data || [])
     setLoading(false)
   }, [session])
+
+  // Cargar miembros del despacho para asignar tareas
+  useEffect(() => {
+    if (!org?.id) return
+    ;(async () => {
+      const { data } = await supabase
+        .from('despacho_miembros')
+        .select('user_id, rol, user_profiles(nombre, email)')
+        .eq('despacho_id', org.id)
+        .eq('activo', true)
+        .in('rol', ['admin', 'abogado', 'asistente'])
+      setMiembros(data || [])
+    })()
+  }, [org?.id])
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { cargar() }, [cargar])
@@ -73,6 +91,7 @@ export default function Tareas({ session }) {
       fecha_limite: t.fecha_limite || '',
       prioridad: t.prioridad || 'Normal',
       estado: t.estado || 'Pendiente',
+      asignado_a: t.asignado_a || '',
     })
     setModal(true)
   }
@@ -103,7 +122,32 @@ export default function Tareas({ session }) {
     setTareas(arr => arr.filter(t => t.id !== id))
   }
 
-  const lista = filtroEstado === 'Todos' ? tareas : tareas.filter(t => t.estado === filtroEstado)
+  const lista = (() => {
+    let arr = filtroEstado === 'Todos' ? tareas : tareas.filter(t => t.estado === filtroEstado)
+    if (filtroAsignado !== 'Todos') arr = arr.filter(t => t.asignado_a === filtroAsignado)
+    return arr
+  })()
+
+  // Helper para obtener nombre de miembro por user_id
+  function nombreMiembro(uid) {
+    if (!uid) return null
+    const m = miembros.find(m => m.user_id === uid)
+    if (!m) return null
+    return m.user_profiles?.nombre || m.user_profiles?.email?.split('@')[0] || uid.slice(0, 8)
+  }
+
+  function exportarExcel() {
+    const dataExportar = lista.map(t => ({
+      ...t,
+      asignado_nombre: nombreMiembro(t.asignado_a) || 'Sin asignar'
+    }))
+    exportarCSV(
+      dataExportar,
+      ['Título', 'Descripción', 'Expediente', 'Responsable Externo', 'Fecha Límite', 'Prioridad', 'Estado', 'Asignado Interno'],
+      ['titulo', 'descripcion', 'expediente', 'responsable', 'fecha_limite', 'prioridad', 'estado', 'asignado_nombre'],
+      `tareas_${new Date().toISOString().slice(0, 10)}`
+    )
+  }
 
   return (
     <div>
@@ -120,6 +164,19 @@ export default function Tareas({ session }) {
               <option value="Todos">Todos los estados</option>
               {ESTADOS.map(o => <option key={o}>{o}</option>)}
             </select>
+            {miembros.length > 0 && (
+              <select
+                value={filtroAsignado}
+                onChange={e => setFiltroAsignado(e.target.value)}
+                style={{ ...inputStyle, width: 'auto', padding: '7px 12px', fontSize: 12 }}
+              >
+                <option value="Todos">Todos los miembros</option>
+                {miembros.map(m => {
+                  const nombre = m.user_profiles?.nombre || m.user_profiles?.email?.split('@')[0] || m.user_id.slice(0, 8)
+                  return <option key={m.user_id} value={m.user_id}>{nombre}</option>
+                })}
+              </select>
+            )}
             <div style={{
               display: 'flex', gap: 2,
               background: 'var(--surface-3)',
@@ -138,6 +195,12 @@ export default function Tareas({ session }) {
                 }}>{l}</button>
               ))}
             </div>
+            <button onClick={exportarExcel} style={btnSec}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>
+              </svg>
+              Exportar CSV
+            </button>
             <button onClick={abrirNueva} style={btnPri}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 5v14"/><path d="M5 12h14"/>
@@ -174,7 +237,7 @@ export default function Tareas({ session }) {
               <tr>
                 <th>Tarea</th>
                 <th>Expediente</th>
-                <th>Responsable</th>
+                <th>Asignado a</th>
                 <th>Vencimiento</th>
                 <th>Prioridad</th>
                 <th>Estado</th>
@@ -192,7 +255,23 @@ export default function Tareas({ session }) {
                       {t.descripcion && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{t.descripcion}</div>}
                     </td>
                     <td style={{ fontSize: 12, color: 'var(--primary)', fontWeight: 600 }}>{t.expediente || '—'}</td>
-                    <td style={{ fontSize: 12 }}>{t.responsable || '—'}</td>
+                    <td>
+                      {t.asignado_a ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div style={{
+                            width: 26, height: 26, borderRadius: '50%',
+                            background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
+                            color: '#fff', display: 'flex', alignItems: 'center',
+                            justifyContent: 'center', fontSize: 9, fontWeight: 700, flexShrink: 0,
+                          }}>
+                            {iniciales(nombreMiembro(t.asignado_a) || '?')}
+                          </div>
+                          <span style={{ fontSize: 12, color: 'var(--text)' }}>{nombreMiembro(t.asignado_a)}</span>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Sin asignar</span>
+                      )}
+                    </td>
                     <td>
                       <div style={{ fontSize: 13 }}>{fmtFecha(t.fecha_limite)}</div>
                       {t.fecha_limite && <div style={{ display: 'inline-block', marginTop: 2, background: u.bg, color: u.color, padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700 }}>{u.label}</div>}
@@ -335,6 +414,15 @@ export default function Tareas({ session }) {
               </select>
             </Field>
           )}
+          <Field label="Asignado a">
+            <select style={inputStyle} value={form.asignado_a} onChange={e => setForm(f => ({ ...f, asignado_a: e.target.value }))}>
+              <option value="">— Sin asignar —</option>
+              {miembros.map(m => {
+                const nombre = m.user_profiles?.nombre || m.user_profiles?.email?.split('@')[0] || m.user_id.slice(0, 8)
+                return <option key={m.user_id} value={m.user_id}>{nombre} ({m.rol})</option>
+              })}
+            </select>
+          </Field>
           <Field label="Descripción" full>
             <textarea
               style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }}

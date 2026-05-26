@@ -30,29 +30,31 @@ These are read in [src/supabaseClient.js](src/supabaseClient.js) via `import.met
 
 ## Architecture
 
-The app has three source files of substance:
+The application has been restructured into a modular multi-page application with routing, state management, and reusable components:
 
-- [src/supabaseClient.js](src/supabaseClient.js) — creates and exports the singleton `supabase` client.
-- [src/Auth.jsx](src/Auth.jsx) — standalone auth screen (login / register / forgot password). Shown when `session` is null.
-- [src/App.jsx](src/App.jsx) — the entire application. Auth state drives rendering; when a session exists, the main UI is shown.
+- **Routing & Entry Point**: Managed by [src/App.jsx](file:///c:/Users/licdi/lextrack-mx/src/App.jsx) using React Router (`react-router-dom`). Defines roles, layout wrapping, and security middleware redirection for clients.
+- **Pages ([src/pages/](file:///c:/Users/licdi/lextrack-mx/src/pages/))**:
+  - `Dashboard.jsx` (Inicio): Panel showing key metrics, KPIs, charts, and new judicial notices.
+  - `Expedientes.jsx`: Core file tracking, detailed Drawer view with tabs for Info, Historial, Archivos, Boletín CJJ, Amparo Federal (CJF), and Cobranza (Hour & Gasto tracking + printable PDF).
+  - `Tareas.jsx`: KanBan and list view for project task tracking with assignees and statuses.
+  - `Documentos.jsx`: Document templates management (generating files from templates with placeholder injection) and file repository.
+  - `Configuracion.jsx`: Despacho details, RFC, and custom letterhead (membrete) configuration.
+  - `Usuarios.jsx`: Active lawyers, clients registry, and Resend invitation link builder.
+  - `Billing.jsx`: Subscription details and Stripe integrations.
+- **State & Contexts ([src/context/](file:///c:/Users/licdi/lextrack-mx/src/context/))**:
+  - `OrgContext.jsx`: Multi-tenant organization profile resolver and member access rules.
+  - `ThemeContext.jsx`: Handles system light / dark mode themes.
+  - `ToastContext.jsx`: Centralized user toast messaging state.
+- **Layouts & UI components**:
+  - `src/components/layout/` contains `Layout.jsx`, `Navbar.jsx` (includes global instant search), and `Sidebar.jsx`.
+  - `src/components/ui/` contains reusable controls: `Modal.jsx`, `PageHeader.jsx`, `StatusBadge.jsx`, `StatCard.jsx`, and `EmptyState.jsx`.
+- **Helpers**: [src/utils/helpers.js](file:///c:/Users/licdi/lextrack-mx/src/utils/helpers.js) contains date math, legal holiday definitions (LFT), text formatting, and CSV generators.
 
-### App.jsx internals
-
-Everything lives in one file. Key patterns to know:
-
-- **All styles are inline JS objects** defined as `const s = {...}` and `const bd = {...}` at the bottom of the file. There is no CSS framework or external stylesheet (only `App.css` / `index.css` for resets).
-- **Three tabs**: `expedientes` (case list), `pendientes` (deadline view for next 7 days + overdue), `tesis` (opens SCJN SJF search in a new tab via a constructed URL).
-- **`diasHasta(fecha)`** is the core utility — computes days from today to a date string (`YYYY-MM-DD`), returns `null` if no date. Urgency logic everywhere derives from this.
-- **Supabase table**: `expedientes`, owned per user (`user_id = session.user.id`). Columns: `num`, `materia`, `tipo`, `juzgado`, `actor`, `demandado`, `etapa`, `estado`, `actuacion`, `termino` (date), `prioridad`, `notas`, `creado_en`, `actualizado_en`.
-- **No routing library** — tab state is local React state (`useState`).
-- **Export feature**: `exportarTxt()` generates a `.txt` file client-side using a Blob URL download.
-
-### Enumerations (hardcoded constants)
-
-```js
-ETAPAS   // 8 procedural stages
-TIPOS    // 13 lawsuit types  
-MATERIAS // 5 legal subject areas
-```
-
-These must stay consistent with what is stored in the database.
+### Database Tables (Supabase Schema)
+- `despachos`: Organizations.
+- `despacho_miembros`: Links users (`auth.users`) to `despachos` with roles (`admin`, `abogado`, `asistente`, `cliente`).
+- `despacho_config`: Store logo, contact details, and custom membrete text per organization.
+- `expedientes`: Main cases. Contains fields for actor, demandado, juzgado, etc.
+- `tareas`: Tasks linked to cases, assignable to members.
+- `registro_horas` & `registro_gastos`: Billing data tracked per case.
+- `plantillas_documentos`: Legal templates with double brackets placeholder support.

@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { supabase } from '../../supabaseClient'
 import { iniciales } from '../../utils/helpers'
+import { useOrg } from '../../context/OrgContext'
 
 // Conjunto de iconos SVG inline (24x24, stroke 1.8).
 const Icon = ({ d, paths }) => (
@@ -11,15 +12,19 @@ const Icon = ({ d, paths }) => (
 )
 const IDashboard = () => <Icon paths={<><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></>}/>
 const IFolder    = () => <Icon paths={<><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></>}/>
-const IGavel     = () => <Icon paths={<><path d="M14 4l6 6"/><path d="M9 9l8-8 4 4-8 8"/><path d="M11 11L4 18"/><path d="M3 21h7"/></>}/>
+
 const IUsers     = () => <Icon paths={<><circle cx="9" cy="8" r="3.5"/><path d="M2 20c0-3.5 3-6 7-6s7 2.5 7 6"/><circle cx="17" cy="7" r="2.5"/><path d="M14 14c2.5 0 6 1.5 6 4.5"/></>}/>
 const ITasks     = () => <Icon paths={<><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 10l2.5 2.5L16 7"/><path d="M8 16h8"/></>}/>
 const ICalendar  = () => <Icon paths={<><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4"/><path d="M16 3v4"/><path d="M3 10h18"/></>}/>
 const IClock     = () => <Icon paths={<><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>}/>
-const IChart     = () => <Icon paths={<><path d="M3 21V8"/><path d="M9 21V12"/><path d="M15 21V5"/><path d="M21 21V14"/></>}/>
+
 const IDoc       = () => <Icon paths={<><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h6"/></>}/>
+const ICrm       = () => <Icon paths={<><circle cx="9" cy="7" r="3"/><path d="M3 20c0-3 2.5-5 6-5"/><path d="M16 11h6"/><path d="M16 16h6"/><path d="M19 8v11"/></>}/>
 const IUser      = () => <Icon paths={<><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-7 8-7s8 3 8 7"/></>}/>
-const ILog       = () => <Icon paths={<><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/><path d="M3 12h2"/></>}/>
+const ICard      = () => <Icon paths={<><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></>}/>
+
+const ISearch    = () => <Icon paths={<><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></>}/>
+const ISettings  = () => <Icon paths={<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></>}/>
 const ISignOut   = () => <Icon paths={<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></>}/>
 const ISun       = () => <Icon paths={<><circle cx="12" cy="12" r="4"/><path d="M12 3v2"/><path d="M12 19v2"/><path d="M3 12h2"/><path d="M19 12h2"/><path d="M5.5 5.5l1.5 1.5"/><path d="M17 17l1.5 1.5"/><path d="M5.5 18.5l1.5-1.5"/><path d="M17 7l1.5-1.5"/></>}/>
 const IMoon      = () => <Icon paths={<><path d="M21 13.5A9 9 0 1 1 10.5 3a7 7 0 0 0 10.5 10.5z"/></>}/>
@@ -34,43 +39,44 @@ const NAV_GROUPS = [
   {
     title: 'Principal',
     items: [
-      { to: '/app/dashboard', label: 'Dashboard', icon: IDashboard },
+      { to: '/app/dashboard',   label: 'Inicio',     icon: IDashboard },
+      { to: '/app/prospectos',  label: 'Prospectos', icon: ICrm       },
+      { to: '/app/expedientes',  label: 'Expedientes', icon: IFolder  },
     ],
   },
   {
-    title: 'Expedientes',
+    title: 'Herramientas',
     items: [
-      { to: '/app/expedientes', label: 'Expedientes', icon: IFolder },
-      { to: '/app/demandas',    label: 'Demandas',    icon: IGavel  },
-      { to: '/app/partes',      label: 'Partes',      icon: IUsers  },
+      { to: '/app/buscador-partes',  label: 'Buscador Judicial',  icon: ISearch  },
+      { to: '/app/plazos',           label: 'Calculadora de Plazos', icon: IClock },
+      { to: '/app/documentos',       label: 'Plantillas y Archivos', icon: IDoc   },
     ],
   },
   {
     title: 'Control',
     items: [
-      { to: '/app/tareas', label: 'Tareas',  icon: ITasks    },
-      { to: '/app/agenda', label: 'Agenda',  icon: ICalendar },
-      { to: '/app/plazos', label: 'Plazos',  icon: IClock    },
+      { to: '/app/agenda',           label: 'Agenda y Audiencias', icon: ICalendar },
+      { to: '/app/tareas',           label: 'Tareas del Equipo',   icon: ITasks    },
+      { to: '/app/partes',           label: 'Contactos (Partes)',  icon: IUsers   },
     ],
   },
   {
-    title: 'Reportes',
+    title: 'Administración',
     items: [
-      { to: '/app/estadisticas', label: 'Estadísticas', icon: IChart },
-      { to: '/app/documentos',   label: 'Documentos',   icon: IDoc   },
-      { to: '/app/bitacora',     label: 'Bitácora',     icon: ILog   },
-    ],
-  },
-  {
-    title: 'Admin',
-    items: [
-      { to: '/app/usuarios', label: 'Usuarios', icon: IUser },
+      { to: '/app/usuarios',      label: 'Equipo / Usuarios',      icon: IUser     },
+      { to: '/app/facturacion',   label: 'Suscripción',    icon: ICard     },
+      { to: '/app/configuracion', label: 'Configuración',  icon: ISettings },
     ],
   },
 ]
 
+
+const ROL_LABEL = { admin: 'Administrador', abogado: 'Abogado', asistente: 'Asistente', cliente: 'Cliente' }
+const ROL_COLOR = { admin: 'var(--primary)', abogado: 'var(--success)', asistente: 'var(--text-muted)', cliente: 'var(--info)' }
+
 export default function Sidebar({ collapsed, onToggleCollapse, session, theme, onToggleTheme, mobileOpen, onCloseMobile, isMobile }) {
   const navigate = useNavigate()
+  const { org, miembro } = useOrg()
   const w = collapsed ? 'var(--sidebar-w-collapsed)' : 'var(--sidebar-w)'
   const email = session?.user?.email || ''
 
@@ -115,9 +121,17 @@ export default function Sidebar({ collapsed, onToggleCollapse, session, theme, o
         }}>
           <LogoMark/>
           {!collapsed && (
-            <div>
+            <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)', letterSpacing: '1.6px' }}>LEXTRACK</div>
-              <div style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--primary)', letterSpacing: '3px', marginTop: 1 }}>MÉXICO</div>
+              {org ? (
+                <div style={{
+                  fontSize: 10, fontWeight: 600, color: 'var(--text-muted)',
+                  marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  maxWidth: 140,
+                }} title={org.nombre}>{org.nombre}</div>
+              ) : (
+                <div style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--primary)', letterSpacing: '3px', marginTop: 1 }}>MÉXICO</div>
+              )}
             </div>
           )}
         </div>
@@ -128,8 +142,22 @@ export default function Sidebar({ collapsed, onToggleCollapse, session, theme, o
           padding: '12px 8px',
           display: 'flex', flexDirection: 'column', gap: '4px',
         }}>
-          {NAV_GROUPS.map(group => (
-            <div key={group.title} style={{ marginBottom: '10px' }}>
+          {(() => {
+            const isCliente = miembro?.rol === 'cliente'
+            const displayedGroups = NAV_GROUPS.map(group => {
+              if (isCliente) {
+                const items = group.items.filter(item =>
+                  item.to === '/app/dashboard' ||
+                  item.to === '/app/expedientes' ||
+                  item.to === '/app/documentos'
+                )
+                return { ...group, items }
+              }
+              return group
+            }).filter(group => group.items.length > 0)
+
+            return displayedGroups.map(group => (
+              <div key={group.title} style={{ marginBottom: '10px' }}>
               {!collapsed && (
                 <div style={{
                   fontSize: 10, fontWeight: 700, color: 'var(--text-muted)',
@@ -164,7 +192,8 @@ export default function Sidebar({ collapsed, onToggleCollapse, session, theme, o
                 </NavLink>
               ))}
             </div>
-          ))}
+          ))
+          })()}
         </nav>
 
         {/* Footer */}
@@ -178,24 +207,28 @@ export default function Sidebar({ collapsed, onToggleCollapse, session, theme, o
           {!collapsed && (
             <div style={{
               display: 'flex', alignItems: 'center', gap: '10px',
-              padding: '8px',
-              borderRadius: 'var(--radius)',
+              padding: '8px', borderRadius: 'var(--radius)',
               background: 'var(--surface-3)',
             }}>
               <div style={{
                 width: 32, height: 32, borderRadius: '50%',
-                background: 'var(--primary)',
-                color: '#fff',
+                background: 'var(--primary)', color: '#fff',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 11, fontWeight: 700,
+                fontSize: 11, fontWeight: 700, flexShrink: 0,
               }}>{iniciales(email)}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {email.split('@')[0]}
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {email}
-                </div>
+                {miembro?.rol ? (
+                  <div style={{ fontSize: 10, fontWeight: 700, color: ROL_COLOR[miembro.rol] }}>
+                    {ROL_LABEL[miembro.rol]}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {email}
+                  </div>
+                )}
               </div>
             </div>
           )}

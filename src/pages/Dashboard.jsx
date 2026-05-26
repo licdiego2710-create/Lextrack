@@ -6,6 +6,7 @@ import StatCard from '../components/ui/StatCard'
 import StatusBadge from '../components/ui/StatusBadge'
 import PageHeader from '../components/ui/PageHeader'
 import EmptyState from '../components/ui/EmptyState'
+import { useOrg } from '../context/OrgContext'
 
 const ESTADO_COLORS = {
   Activo: '#2563eb',
@@ -15,6 +16,8 @@ const ESTADO_COLORS = {
 }
 
 export default function Dashboard({ session }) {
+  const { miembro } = useOrg()
+  const isCliente = miembro?.rol === 'cliente'
   const [expedientes, setExpedientes] = useState([])
   const [tareasPend, setTareasPend] = useState(0)
   const [boletinHoy, setBoletinHoy] = useState([])
@@ -25,12 +28,18 @@ export default function Dashboard({ session }) {
     ;(async () => {
       if (!session) return
       const hoy = new Date().toISOString().slice(0, 10)
-      const [{ data }, { data: tars }, { data: actBoletin }] = await Promise.all([
+      const queries = [
         supabase.from('expedientes').select('*').order('termino', { ascending: true, nullsFirst: false }),
-        supabase.from('tareas').select('id, estado'),
-        supabase.from('actuaciones').select('id, expediente_id, descripcion, fecha')
-          .eq('fecha', hoy).ilike('descripcion', '%Boletín Judicial%').order('fecha', { ascending: false }),
-      ])
+        !isCliente
+          ? supabase.from('tareas').select('id, estado')
+          : Promise.resolve({ data: [] }),
+        supabase.from('acuerdos_boletin').select('id, expediente_id, descripcion, fecha, leido')
+          .gte('creado_en', hoy + 'T00:00:00')
+          .lte('creado_en', hoy + 'T23:59:59')
+          .order('creado_en', { ascending: false })
+          .limit(20),
+      ]
+      const [{ data }, { data: tars }, { data: actBoletin }] = await Promise.all(queries)
       if (!alive) return
       setTareasPend((tars || []).filter(t => t.estado === 'Pendiente' || t.estado === 'En proceso').length)
       setBoletinHoy(actBoletin || [])
@@ -49,7 +58,7 @@ export default function Dashboard({ session }) {
       setLoading(false)
     })()
     return () => { alive = false }
-  }, [session])
+  }, [session, isCliente])
 
   const total = expedientes.length
   const activos = expedientes.filter(e => e.estado === 'Activo').length
@@ -80,13 +89,13 @@ export default function Dashboard({ session }) {
   })).filter(d => d.value > 0)
 
   if (loading) {
-    return <PageHeader title="Dashboard" subtitle="Cargando..."/>
+    return <PageHeader title="Inicio" subtitle="Cargando..."/>
   }
 
   return (
     <div>
       <PageHeader
-        title="Dashboard"
+        title="Inicio"
         subtitle="Resumen general de tu actividad jurídica"
       />
 
@@ -126,7 +135,7 @@ export default function Dashboard({ session }) {
         <StatCard title="Activos" value={activos} subtitle="En seguimiento" color="var(--success)"/>
         <StatCard title="Urgentes" value={urgentes} subtitle="Vencen en ≤3 días" color="var(--warning)"/>
         <StatCard title="Vencidos" value={vencidos} subtitle="Requieren acción" color="var(--danger)"/>
-        <StatCard title="Tareas" value={tareasPend} subtitle="Pendientes" color="#8b5cf6"/>
+        {!isCliente && <StatCard title="Tareas" value={tareasPend} subtitle="Pendientes" color="#8b5cf6"/>}
       </div>
 
       {/* Gráficas */}
@@ -265,14 +274,15 @@ export default function Dashboard({ session }) {
           <div>
             {boletinHoy.map(a => {
               const exp = expPorId[a.expediente_id]
-              const desc = a.descripcion.replace(/^\[Auto-detectado \/ Boletín Judicial\]\s*/i, '')
+              const desc = (a.descripcion || '').replace(/^\[Auto-detectado \/ Boletín Judicial\]\s*/i, '')
               return (
                 <div key={a.id} style={{ ...listRow, alignItems: 'flex-start', gap: 14 }}>
                   <div style={{
-                    width: 32, height: 32, borderRadius: 8, background: 'var(--info-bg)',
+                    width: 32, height: 32, borderRadius: 8,
+                    background: a.leido ? 'var(--muted-bg)' : 'var(--info-bg)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                   }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--info-text)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={a.leido ? 'var(--text-muted)' : 'var(--info-text)'} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                       <path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>
                     </svg>
@@ -284,13 +294,15 @@ export default function Dashboard({ session }) {
                       </div>
                     )}
                     <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                      {desc || 'Acuerdo publicado'}
+                      {desc || 'Acuerdo publicado en el Boletín CJJ'}
                     </div>
+                    {a.fecha && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>📅 {fmtFecha(a.fecha)}</div>}
                   </div>
                   <span style={{
-                    background: 'var(--info-bg)', color: 'var(--info-text)',
+                    background: a.leido ? 'var(--muted-bg)' : 'var(--danger-bg)',
+                    color: a.leido ? 'var(--text-muted)' : 'var(--danger-text)',
                     fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 999, whiteSpace: 'nowrap', flexShrink: 0,
-                  }}>Boletín</span>
+                  }}>{a.leido ? 'Leído' : 'Nuevo'}</span>
                 </div>
               )
             })}

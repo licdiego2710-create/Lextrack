@@ -1,3 +1,5 @@
+/* eslint-env node */
+/* eslint-disable no-useless-escape */
 /**
  * Scraper del Boletín Judicial del Estado de Jalisco
  * https://cjj.gob.mx/bulletin
@@ -275,7 +277,6 @@ async function extraerFilas(page, juzgadoNombre) {
   const resultados = []
 
   try {
-    // Esperar que desaparezca el loader
     try {
       await page.waitForSelector(SEL.loader, { state: 'hidden', timeout: 5000 })
     } catch { /* sin loader */ }
@@ -290,15 +291,40 @@ async function extraerFilas(page, juzgadoNombre) {
         const textos = await Promise.all(celdas.map(c => c.textContent()))
         const limpio = textos.map(t => t?.trim() || '')
 
-        // Intentar extraer: columna 0 = expediente, 1 = (juzgado o desc), 2 = desc
         let expedienteNum = limpio[0]
-        let juzgado       = juzgadoNombre || limpio[1] || ''
+        let juzgado       = juzgadoNombre || ''
+        let actor         = null
+        let demandado     = null
         let descripcion   = limpio[limpio.length - 1]
 
-        // Si hay 3+ columnas asumir [expediente, juzgado, descripcion]
-        if (limpio.length >= 3) {
+        // Layout de 5+ cols: [exp, juzgado, actor, demandado, descripcion]
+        if (limpio.length >= 5) {
+          juzgado     = juzgadoNombre || limpio[1]
+          actor       = limpio[2] || null
+          demandado   = limpio[3] || null
+          descripcion = limpio[4]
+        // Layout de 4 cols: [exp, actor, demandado, descripcion]
+        } else if (limpio.length === 4) {
+          actor       = limpio[1] || null
+          demandado   = limpio[2] || null
+          descripcion = limpio[3]
+        // Layout de 3 cols: [exp, juzgado/partes, descripcion]
+        } else if (limpio.length === 3) {
           juzgado     = juzgadoNombre || limpio[1]
           descripcion = limpio[2]
+          // Intentar extraer partes de la descripción o col2
+          const partes = extraerPartesDeTexto(limpio[1] + ' ' + limpio[2])
+          actor     = partes.actor
+          demandado = partes.demandado
+        } else {
+          juzgado     = juzgadoNombre || limpio[1] || ''
+        }
+
+        // Si no se encontraron partes en cols, intentar parsear de descripcion
+        if (!actor && !demandado && descripcion) {
+          const partes = extraerPartesDeTexto(descripcion)
+          actor     = partes.actor
+          demandado = partes.demandado
         }
 
         if (!expedienteNum || expedienteNum.length < 3) continue
@@ -307,6 +333,8 @@ async function extraerFilas(page, juzgadoNombre) {
           expediente_num: normalizarExpediente(expedienteNum),
           juzgado:        normalizarJuzgado(juzgado),
           materia:        inferirMateria(juzgado),
+          actor:          actor ? actor.slice(0, 300) : null,
+          demandado:      demandado ? demandado.slice(0, 300) : null,
           fecha:          HOY,
           descripcion:    descripcion?.slice(0, 1000) || '',
           procesado:      false,
@@ -318,6 +346,33 @@ async function extraerFilas(page, juzgadoNombre) {
   }
 
   return resultados
+}
+
+// Extrae actor y demandado de un texto libre del boletín
+function extraerPartesDeTexto(texto) {
+  if (!texto) return { actor: null, demandado: null }
+  const t = texto.toUpperCase()
+
+  // Patrón: "NOMBRE vs NOMBRE" o "NOMBRE c/ NOMBRE" o "NOMBRE contra NOMBRE"
+  const vsMatch = t.match(/^(.{3,80}?)\s+(?:VS\.?|C\/|CONTRA|VS\/)\s+(.{3,80})/)
+  if (vsMatch) {
+    return {
+      actor:     vsMatch[1].trim().replace(/[^A-ZÁÉÍÓÚÜÑ\s\.\,\-]/g, '').trim() || null,
+      demandado: vsMatch[2].trim().replace(/[^A-ZÁÉÍÓÚÜÑ\s\.\,\-]/g, '').trim() || null,
+    }
+  }
+
+  // Patrón: "ACTOR: ... DEMANDADO: ..."
+  const actorMatch = t.match(/(?:ACTOR|PARTE ACTORA|PROMOVENTE)[:\s]+([A-ZÁÉÍÓÚÜÑ\s\.\,]{5,80})/)
+  const demMatch   = t.match(/(?:DEMANDADO|PARTE DEMANDADA|TERCERO)[:\s]+([A-ZÁÉÍÓÚÜÑ\s\.\,]{5,80})/)
+  if (actorMatch || demMatch) {
+    return {
+      actor:     actorMatch ? actorMatch[1].trim() : null,
+      demandado: demMatch   ? demMatch[1].trim()   : null,
+    }
+  }
+
+  return { actor: null, demandado: null }
 }
 
 async function extraerPorTexto(page) {
@@ -363,10 +418,18 @@ function inferirMateria(juzgado) {
 }
 
 // ─── GUARDAR EN SUPABASE ─────────────────────────────────────────────────────
+function normalizarNombre(nombre) {
+  if (!nombre) return null
+  return nombre.trim()
+    .toUpperCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')  // quitar acentos
+    .replace(/\s+/g, ' ')
+    .slice(0, 300)
+}
+
 async function guardarAcuerdos(acuerdos) {
   if (!acuerdos.length) { log('Sin acuerdos para guardar'); return 0 }
 
-  // Insertar en lotes de 100
   let insertados = 0
   const lotes = []
   for (let i = 0; i < acuerdos.length; i += 100) {
@@ -374,18 +437,92 @@ async function guardarAcuerdos(acuerdos) {
   }
 
   for (const lote of lotes) {
-    const { error, count } = await supabase
+    const { data, error } = await supabase
       .from('acuerdos_boletin')
       .insert(lote, { count: 'exact' })
+      .select('id, expediente_num, juzgado, materia, actor, demandado, fecha')
 
     if (error) {
       err(`Error insertando lote: ${error.message}`)
-    } else {
-      insertados += (count || lote.length)
+      continue
+    }
+
+    insertados += (data?.length || lote.length)
+
+    // Insertar partes en índice de búsqueda
+    if (data?.length) {
+      await guardarPartes(data)
     }
   }
 
   return insertados
+}
+
+async function guardarPartes(acuerdos) {
+  const partes = []
+
+  for (const a of acuerdos) {
+    if (a.actor && a.actor.trim().length >= 3) {
+      partes.push({
+        acuerdo_id:     a.id,
+        expediente_num: a.expediente_num,
+        nombre:         normalizarNombre(a.actor),
+        nombre_raw:     a.actor.trim(),
+        rol:            'actor',
+        juzgado:        a.juzgado || null,
+        materia:        a.materia || null,
+        partido_judicial: inferirPartido(a.juzgado),
+        fecha:          a.fecha,
+        fuente:         'CJJ',
+      })
+    }
+    if (a.demandado && a.demandado.trim().length >= 3) {
+      partes.push({
+        acuerdo_id:     a.id,
+        expediente_num: a.expediente_num,
+        nombre:         normalizarNombre(a.demandado),
+        nombre_raw:     a.demandado.trim(),
+        rol:            'demandado',
+        juzgado:        a.juzgado || null,
+        materia:        a.materia || null,
+        partido_judicial: inferirPartido(a.juzgado),
+        fecha:          a.fecha,
+        fuente:         'CJJ',
+      })
+    }
+  }
+
+  if (!partes.length) return
+
+  // Insertar en lotes, ignorar duplicados
+  for (let i = 0; i < partes.length; i += 100) {
+    const lote = partes.slice(i, i + 100)
+    const { error } = await supabase
+      .from('partes_judiciales')
+      .upsert(lote, { onConflict: 'acuerdo_id,nombre,rol', ignoreDuplicates: true })
+
+    if (error && !error.message?.includes('duplicate') && !error.message?.includes('unique')) {
+      err(`Error guardando partes: ${error.message}`)
+    }
+  }
+
+  log(`  → ${partes.length} partes indexadas`)
+}
+
+function inferirPartido(juzgado) {
+  if (!juzgado) return 'ZMG'
+  const j = juzgado.toUpperCase()
+  const foraneos = [
+    'PUERTO VALLARTA', 'LAGOS DE MORENO', 'CIUDAD GUZMAN', 'ZAPOTLAN',
+    'TEPATITLAN', 'LA BARCA', 'OCOTLAN', 'ARANDAS', 'AMECA', 'TEQUILA',
+    'AUTLAN', 'COLOTLAN', 'ENCARNACION', 'SAN JUAN DE LOS LAGOS',
+    'SAYULA', 'TAMAZULA', 'TLAJOMULCO', 'TONAL', 'CIHUATLAN', 'CASIMIRO',
+    'AHUALULCO',
+  ]
+  for (const f of foraneos) {
+    if (j.includes(f)) return f.charAt(0) + f.slice(1).toLowerCase()
+  }
+  return 'ZMG'
 }
 
 // ─── MAIN CON REINTENTOS ─────────────────────────────────────────────────────

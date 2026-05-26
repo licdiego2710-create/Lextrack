@@ -28,16 +28,45 @@ function normJuzgado(s) {
   return String(s || '').trim().replace(/\s+/g, ' ').replace(/[^\w\s]/g, '').toUpperCase()
 }
 
+function parseExpedienteParts(numStr) {
+  const clean = String(numStr || '').trim().toUpperCase().replace(/\s+/g, '')
+  // Buscar el primer bloque de números (el número del expediente, quitando ceros a la izquierda)
+  const numMatch = clean.match(/^0*(\d+)/)
+  if (!numMatch) return null
+  const baseNum = numMatch[1]
+
+  // Buscar año de 2 o 4 dígitos (ej: /24, /2024, -24, -2024)
+  const yearMatch = clean.match(/[\/-](20\d{2}|19\d{2}|\d{2})\b/)
+  if (!yearMatch) return null
+  let year = yearMatch[1]
+  if (year.length === 2) {
+    const y = parseInt(year, 10)
+    year = y > 50 ? `19${year}` : `20${year}`
+  }
+
+  return { baseNum, year }
+}
+
 // ─── MATCHING ────────────────────────────────────────────────────────────────
 /**
  * Compara dos números de expediente con flexibilidad:
- * "306/2024" coincide con "0306/2024", "306/CIVIL/2024", etc.
+ * "306/2024" coincide con "0306/24", "306/CIVIL/2024", etc.
  */
 function expedientesCoinciden(numBoletin, numExpediente) {
   const a = norm(numBoletin)
   const b = norm(numExpediente)
   if (a === b) return true
-  // Match parcial: el número del boletín contiene el del expediente o viceversa
+
+  // Comparación inteligente por número base y año conmemorativo
+  const partsA = parseExpedienteParts(a)
+  const partsB = parseExpedienteParts(b)
+  if (partsA && partsB) {
+    if (partsA.baseNum === partsB.baseNum && partsA.year === partsB.year) {
+      return true
+    }
+  }
+
+  // Fallback a coincidencia parcial
   return a.includes(b) || b.includes(a)
 }
 

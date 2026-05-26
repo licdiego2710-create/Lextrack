@@ -2,29 +2,36 @@ import { useState, useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../../supabaseClient'
 import { iniciales, diasHasta } from '../../utils/helpers'
+import { useOrg } from '../../context/OrgContext'
+import { useTheme } from '../../context/ThemeContext'
 
 const PAGE_TITLES = {
-  '/app/dashboard': 'Dashboard',
+  '/app/dashboard': 'Inicio',
   '/app/expedientes': 'Expedientes',
-  '/app/demandas': 'Demandas',
-  '/app/partes': 'Partes procesales',
-  '/app/tareas': 'Tareas',
-  '/app/agenda': 'Agenda',
+  '/app/partes': 'Contactos (Partes)',
+  '/app/tareas': 'Tareas del Equipo',
+  '/app/agenda': 'Agenda y Audiencias',
   '/app/plazos': 'Calculadora de Plazos',
-  '/app/estadisticas': 'Estadísticas',
-  '/app/documentos': 'Documentos',
-  '/app/bitacora': 'Bitácora',
-  '/app/usuarios': 'Usuarios',
+  '/app/documentos': 'Plantillas y Archivos',
+  '/app/usuarios': 'Equipo / Usuarios',
+  '/app/prospectos': 'CRM — Prospectos',
 }
 
 export default function Navbar({ session, onOpenSidebar }) {
   const location = useLocation()
   const navigate = useNavigate()
+  const { org } = useOrg()
+  const { isDark, toggleTheme } = useTheme()
   const [menuOpen, setMenuOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
   const [busqueda, setBusqueda] = useState('')
+  const [searchResults, setSearchResults] = useState(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searching, setSearching] = useState(false)
   const [alertas, setAlertas] = useState([])
   const dropRef = useRef(null)
+  const searchRef = useRef(null)
+  const searchTimer = useRef(null)
 
   // Cargar expedientes urgentes para notificaciones reales
   useEffect(() => {
@@ -55,19 +62,56 @@ export default function Navbar({ session, onOpenSidebar }) {
     return () => document.removeEventListener('mousedown', h)
   }, [])
 
+  // Búsqueda global en tiempo real
+  useEffect(() => {
+    clearTimeout(searchTimer.current)
+    if (!busqueda.trim() || busqueda.length < 2) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSearchResults(null)
+      setSearchOpen(false)
+      return
+    }
+    setSearching(true)
+    setSearchOpen(true)
+    searchTimer.current = setTimeout(async () => {
+      const q = busqueda.trim()
+      const [exps, tareas, prosps] = await Promise.all([
+        supabase.from('expedientes').select('id, num, actor, demandado, estado')
+          .or(`num.ilike.%${q}%,actor.ilike.%${q}%,demandado.ilike.%${q}%`)
+          .limit(5),
+        supabase.from('tareas').select('id, titulo, estado, prioridad')
+          .ilike('titulo', `%${q}%`).limit(4),
+        supabase.from('prospectos').select('id, nombre, email, asunto')
+          .or(`nombre.ilike.%${q}%,email.ilike.%${q}%,asunto.ilike.%${q}%`)
+          .limit(4),
+      ])
+      setSearchResults({
+        expedientes: exps.data || [],
+        tareas: tareas.data || [],
+        prospectos: prosps.data || [],
+      })
+      setSearching(false)
+    }, 350)
+    return () => clearTimeout(searchTimer.current)
+  }, [busqueda])
+
+  function irA(path) {
+    navigate(path)
+    setBusqueda('')
+    setSearchOpen(false)
+    setSearchResults(null)
+  }
+
+  const totalResults = searchResults
+    ? searchResults.expedientes.length + searchResults.tareas.length + searchResults.prospectos.length
+    : 0
+
   const email = session?.user?.email || ''
   const title = PAGE_TITLES[location.pathname] || 'LexTrack MX'
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     navigate('/auth')
-  }
-
-  function handleSearch(e) {
-    if (e.key === 'Enter' && busqueda.trim()) {
-      navigate(`/app/expedientes?q=${encodeURIComponent(busqueda.trim())}`)
-      setBusqueda('')
-    }
   }
 
   const tieneAlertas = alertas.length > 0
@@ -103,15 +147,17 @@ export default function Navbar({ session, onOpenSidebar }) {
 
       {/* Breadcrumb */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>LexTrack MX</div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 180 }}>
+          {org?.nombre || 'LexTrack MX'}
+        </div>
         <div style={{ color: 'var(--text-muted)' }}>/</div>
         <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {title}
         </div>
       </div>
 
-      {/* Búsqueda funcional */}
-      <div style={{ position: 'relative', flex: '0 1 320px', display: 'none' }} className="lx-search">
+      {/* Búsqueda Global */}
+      <div ref={searchRef} style={{ position: 'relative', flex: '0 1 360px', display: 'none' }} className="lx-search">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
              style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }}>
           <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>
@@ -119,22 +165,121 @@ export default function Navbar({ session, onOpenSidebar }) {
         <input
           value={busqueda}
           onChange={e => setBusqueda(e.target.value)}
-          onKeyDown={handleSearch}
-          placeholder="Buscar expediente... (Enter)"
+          onFocus={() => busqueda.length >= 2 && setSearchOpen(true)}
+          placeholder="Buscar expedientes, tareas, prospectos..."
           style={{
-            width: '100%',
-            background: 'var(--surface-3)',
-            border: '1px solid var(--border)',
-            color: 'var(--text)',
-            borderRadius: 'var(--radius)',
-            padding: '8px 12px 8px 36px',
-            fontSize: 13,
+            width: '100%', background: 'var(--surface-3)',
+            border: '1px solid var(--border)', color: 'var(--text)',
+            borderRadius: 'var(--radius)', padding: '8px 12px 8px 36px', fontSize: 13,
           }}
         />
+        {busqueda && (
+          <button onClick={() => { setBusqueda(''); setSearchOpen(false); setSearchResults(null) }}
+            style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+              background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2 }}>
+            ✕
+          </button>
+        )}
+
+        {searchOpen && busqueda.length >= 2 && (
+          <div style={{
+            position: 'absolute', top: 'calc(100% + 8px)', left: 0, right: 0,
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)',
+            zIndex: 200, overflow: 'hidden', maxHeight: 420, overflowY: 'auto',
+          }}>
+            {searching ? (
+              <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Buscando...</div>
+            ) : totalResults === 0 ? (
+              <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Sin resultados para "{busqueda}"</div>
+            ) : (
+              <>
+                {searchResults.expedientes.length > 0 && (
+                  <div>
+                    <div style={{ padding: '8px 14px 4px', fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>📁 Expedientes</div>
+                    {searchResults.expedientes.map(e => (
+                      <div key={e.id} onClick={() => irA('/app/expedientes')}
+                        style={{ padding: '8px 14px', cursor: 'pointer', display: 'flex', gap: 10, alignItems: 'center' }}
+                        onMouseEnter={ev => ev.currentTarget.style.background = 'var(--surface-3)'}
+                        onMouseLeave={ev => ev.currentTarget.style.background = 'transparent'}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--primary)', minWidth: 60 }}>{e.num}</span>
+                        <span style={{ fontSize: 12, color: 'var(--text)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {e.actor} vs {e.demandado}
+                        </span>
+                        <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 999, background: 'var(--surface-3)', color: 'var(--text-muted)' }}>{e.estado}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {searchResults.tareas.length > 0 && (
+                  <div style={{ borderTop: searchResults.expedientes.length ? '1px solid var(--border)' : 'none' }}>
+                    <div style={{ padding: '8px 14px 4px', fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>✅ Tareas</div>
+                    {searchResults.tareas.map(t => (
+                      <div key={t.id} onClick={() => irA('/app/tareas')}
+                        style={{ padding: '8px 14px', cursor: 'pointer', display: 'flex', gap: 10, alignItems: 'center' }}
+                        onMouseEnter={ev => ev.currentTarget.style.background = 'var(--surface-3)'}
+                        onMouseLeave={ev => ev.currentTarget.style.background = 'transparent'}>
+                        <span style={{ fontSize: 12, color: 'var(--text)', flex: 1 }}>{t.titulo}</span>
+                        <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 999, background: 'var(--surface-3)', color: 'var(--text-muted)' }}>{t.estado}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {searchResults.prospectos.length > 0 && (
+                  <div style={{ borderTop: (searchResults.expedientes.length || searchResults.tareas.length) ? '1px solid var(--border)' : 'none' }}>
+                    <div style={{ padding: '8px 14px 4px', fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>👤 Prospectos</div>
+                    {searchResults.prospectos.map(p => (
+                      <div key={p.id} onClick={() => irA('/app/prospectos')}
+                        style={{ padding: '8px 14px', cursor: 'pointer', display: 'flex', gap: 10, alignItems: 'center' }}
+                        onMouseEnter={ev => ev.currentTarget.style.background = 'var(--surface-3)'}
+                        onMouseLeave={ev => ev.currentTarget.style.background = 'transparent'}>
+                        <span style={{ fontSize: 12, color: 'var(--text)', flex: 1 }}>{p.nombre}</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{p.email}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Acciones */}
       <div ref={dropRef} style={{ display: 'flex', alignItems: 'center', gap: '8px', position: 'relative' }}>
+
+        {/* Toggle Tema */}
+        <button
+          onClick={toggleTheme}
+          aria-label={isDark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+          title={isDark ? 'Modo claro' : 'Modo oscuro'}
+          style={{
+            background: 'var(--surface-3)',
+            border: '1px solid var(--border)',
+            color: 'var(--text)',
+            borderRadius: 'var(--radius)',
+            padding: '8px 10px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: 'all 0.2s ease',
+          }}
+        >
+          {isDark ? (
+            // Ícono Sol (modo claro)
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="4"/>
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+            </svg>
+          ) : (
+            // Ícono Luna (modo oscuro)
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+          )}
+        </button>
+
         {/* Campana de notificaciones */}
         <button
           onClick={() => { setNotifOpen(v => !v); setMenuOpen(false) }}
@@ -236,6 +381,11 @@ export default function Navbar({ session, onOpenSidebar }) {
             <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{email.split('@')[0]}</div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{email}</div>
+              {org && (
+                <div style={{ fontSize: 11, color: 'var(--primary)', marginTop: 4, fontWeight: 600 }}>
+                  {org.nombre}
+                </div>
+              )}
             </div>
             <button onClick={handleSignOut} style={dropdownItem('var(--danger)')}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

@@ -2,7 +2,15 @@
    LexTrack MX — Design System
    ========================================================= */
 
-*, *::before, *::after { box-sizing: border-box; }
+*, *::before, *::after {
+  box-sizing: border-box;
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.15s ease, box-shadow 0.25s ease;
+}
+
+/* Excluir transiciones en animaciones propias */
+.spinner, .fade-in, .slide-up, .pulse, svg, svg * {
+  transition: none !important;
+}
 
 html, body, #root {
   margin: 0;
@@ -162,9 +170,14 @@ table { border-collapse: collapse; }
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+@keyframes pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
 
 .fade-in   { animation: fadeIn 0.25s ease-out; }
 .slide-up  { animation: slideUp 0.3s ease-out; }
+.pulse     { animation: pulse 1.5s infinite ease-in-out; }
 
 /* ---------- Focus ---------- */
 :focus-visible {
