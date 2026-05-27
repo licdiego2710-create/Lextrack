@@ -13,21 +13,23 @@ if (isPlaceholder) {
 }
 const SUPABASE_URL = rawUrl
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY
-const RESEND_API_KEY = process.env.RESEND_API_KEY
+// Sanitizar clave Resend: solo ASCII imprimible, debe empezar con re_
+const rawResendKey = (process.env.RESEND_API_KEY || '').replace(/[^\x20-\x7E]/g, '').trim()
+const RESEND_API_KEY = rawResendKey.startsWith('re_') ? rawResendKey : null
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !RESEND_API_KEY) {
-  console.error('Faltan variables de entorno necesarias: SUPABASE_URL, SUPABASE_SERVICE_KEY o SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY')
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  console.error('Faltan variables de entorno: SUPABASE_URL, SUPABASE_SERVICE_KEY')
   process.exit(1)
+}
+if (!RESEND_API_KEY) {
+  console.warn('RESEND_API_KEY no configurada o inválida — se omitirá el envío de emails.')
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false
-  }
+  auth: { persistSession: false, autoRefreshToken: false }
 })
 
-const resend = new Resend(RESEND_API_KEY)
+const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null
 
 async function run() {
   console.log('Iniciando cron de alertas de plazos procesales...')
@@ -181,13 +183,17 @@ async function run() {
         </div>
       `
 
-      const fromEmail = process.env.RESEND_FROM_EMAIL || 'LexTrack Alertas <onboarding@resend.dev>'
-      await resend.emails.send({
-        from: fromEmail,
-        to: correos,
-        subject: `⚠️ Alerta de Plazos: Vencimientos próximos en ${despachoNombre}`,
-        html: emailHtml,
-      })
+      if (resend) {
+        const fromEmail = (process.env.RESEND_FROM_EMAIL || 'LexTrack Alertas <onboarding@resend.dev>').replace(/[^\x20-\x7E]/g, '').trim()
+        await resend.emails.send({
+          from: fromEmail,
+          to: correos,
+          subject: `⚠️ Alerta de Plazos: Vencimientos próximos en ${despachoNombre}`,
+          html: emailHtml,
+        })
+      } else {
+        console.log(`[SIN EMAIL] Se habrían notificado ${correos.length} usuarios del despacho "${despachoNombre}": ${correos.join(', ')}`)
+      }
     }
 
     console.log('Cron finalizado con éxito.')
