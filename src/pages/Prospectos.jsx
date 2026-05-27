@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { useOrg } from '../context/OrgContext'
 import { useToast } from '../context/ToastContext'
@@ -47,6 +47,7 @@ export default function Prospectos({ session }) {
   const { org, canWrite } = useOrg()
   const toast  = useToast()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
 
   const [prospectos, setProspectos] = useState([])
   const [loading, setLoading]       = useState(true)
@@ -111,6 +112,16 @@ export default function Prospectos({ session }) {
     }, 0)
     return () => clearTimeout(t)
   }, [cargar])
+
+  // Auto-abrir modal desde URL action=nuevo (p.ej. desde Dashboard)
+  useEffect(() => {
+    if (searchParams.get('action') === 'nuevo' && canWrite) {
+      setForm(formVacio())
+      setEditId(null)
+      setModal(true)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ── CRUD ─────────────────────────────────────────────────────
   function abrirNuevo() {
