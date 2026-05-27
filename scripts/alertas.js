@@ -4,7 +4,11 @@ import dotenv from 'dotenv'
 
 dotenv.config()
 
-const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
+let rawUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://srzyzkiozqtsdzydyouk.supabase.co').trim()
+if (rawUrl && !rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+  rawUrl = 'https://' + rawUrl
+}
+const SUPABASE_URL = rawUrl
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY
 const RESEND_API_KEY = process.env.RESEND_API_KEY
 

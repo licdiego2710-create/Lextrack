@@ -7,7 +7,11 @@ import { createClient } from '@supabase/supabase-js'
 import { Resend } from 'resend'
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
-const SUPABASE_URL    = process.env.SUPABASE_URL
+let rawUrl = (process.env.SUPABASE_URL || 'https://srzyzkiozqtsdzydyouk.supabase.co').trim()
+if (rawUrl && !rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+  rawUrl = 'https://' + rawUrl
+}
+const SUPABASE_URL    = rawUrl
 const SUPABASE_KEY    = process.env.SUPABASE_SERVICE_KEY
 const RESEND_API_KEY  = process.env.RESEND_API_KEY
 const FROM_EMAIL      = process.env.FROM_EMAIL || 'alertas@lextrackmx.com'

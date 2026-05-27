@@ -20,8 +20,12 @@ import { getCatalogoTercerCircuito }   from '../providers/federalAmparoJaliscoPr
 
 // ─── SUPABASE ────────────────────────────────────────────────────────────────
 
+let rawUrl = (process.env.SUPABASE_URL || 'https://srzyzkiozqtsdzydyouk.supabase.co').trim()
+if (rawUrl && !rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+  rawUrl = 'https://' + rawUrl
+}
 const supabase = createClient(
-  process.env.SUPABASE_URL,
+  rawUrl,
   process.env.SUPABASE_SERVICE_KEY
 )
 

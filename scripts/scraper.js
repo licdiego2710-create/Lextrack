@@ -12,7 +12,11 @@ import { chromium } from 'playwright'
 import { createClient } from '@supabase/supabase-js'
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
-const SUPABASE_URL     = process.env.SUPABASE_URL
+let rawUrl = (process.env.SUPABASE_URL || 'https://srzyzkiozqtsdzydyouk.supabase.co').trim()
+if (rawUrl && !rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+  rawUrl = 'https://' + rawUrl
+}
+const SUPABASE_URL     = rawUrl
 const SUPABASE_KEY     = process.env.SUPABASE_SERVICE_KEY   // service_role key
 const BOLETIN_URL      = 'https://cjj.gob.mx/bulletin'
 const MAX_RETRIES      = 3

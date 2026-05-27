@@ -34,8 +34,12 @@ const TIMEOUT_MS  = 30_000
 // ─── SUPABASE ────────────────────────────────────────────────────────────────
 
 function crearCliente() {
+  let rawUrl = (process.env.SUPABASE_URL || 'https://srzyzkiozqtsdzydyouk.supabase.co').trim()
+  if (rawUrl && !rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+    rawUrl = 'https://' + rawUrl
+  }
   return createClient(
-    process.env.SUPABASE_URL,
+    rawUrl,
     process.env.SUPABASE_SERVICE_KEY
   )
 }
