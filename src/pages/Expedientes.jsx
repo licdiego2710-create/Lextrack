@@ -164,6 +164,7 @@ export default function Expedientes({ session }) {
   const [editId, setEditId] = useState(null)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState(() => formVacio(session?.user?.email || ''))
+  const [buscandoPartes, setBuscandoPartes] = useState(false)
 
   const [detalleExp, setDetalleExp] = useState(null)
   const [tabDetalle, setTabDetalle] = useState('info')
@@ -416,7 +417,20 @@ export default function Expedientes({ session }) {
     toast(editId ? 'Expediente actualizado' : '✅ Expediente creado')
     setModal(false)
     await cargar()
-    
+
+    // Insertar actuación inicial en historial al crear
+    if (!editId && data && actuacion.trim()) {
+      await supabase.from('actuaciones').insert({
+        expediente_id: data.id,
+        descripcion: actuacion,
+        fecha: form.fecha_inicio || new Date().toISOString().slice(0, 10),
+        tipo_actuacion: form.tipoPromo || 'Acuerdo',
+        estatus_cumplimiento: 'Pendiente',
+        user_id: session.user.id,
+        creado_en: new Date().toISOString(),
+      })
+    }
+
     // Auto-scraping CJJ al crear
     if (!editId && data && cveJuz) {
       toast('🔍 Consultando boletín del CJJ automáticamente...')
@@ -444,6 +458,45 @@ export default function Expedientes({ session }) {
           toast('Sin acuerdos en el boletín aún — se revisará automáticamente')
         }
       } catch { /* si falla no bloqueamos */ }
+    }
+  }
+
+  async function buscarEnBoletin() {
+    const num = form.num.trim()
+    if (!num) { toast('Escribe el número de expediente primero', 'error'); return }
+    setBuscandoPartes(true)
+    try {
+      const { data, error } = await supabase
+        .from('partes_judiciales')
+        .select('expediente_num, nombre_raw, rol, juzgado, materia, partido_judicial')
+        .ilike('expediente_num', `%${num}%`)
+        .limit(20)
+
+      if (error) throw error
+      if (!data || data.length === 0) {
+        toast('No se encontró el expediente en el boletín judicial', 'warning'); return
+      }
+
+      // Extraer actor, demandado y datos del juzgado
+      const actor = data.find(p => /actor|promovente|demandante/i.test(p.rol))?.nombre_raw || ''
+      const demandado = data.find(p => /demandado|reo/i.test(p.rol))?.nombre_raw || ''
+      const juzgado = data[0]?.juzgado || ''
+      const materia = data[0]?.materia || ''
+      const partido = data[0]?.partido_judicial || ''
+
+      setForm(f => ({
+        ...f,
+        ...(actor && { actor }),
+        ...(demandado && { demandado }),
+        ...(juzgado && { juzgado }),
+        ...(materia && { materia }),
+        ...(partido && { partido_judicial: partido }),
+      }))
+      toast(`Datos encontrados en el boletín: ${data.length} parte(s)`)
+    } catch (e) {
+      toast('Error al buscar: ' + e.message, 'error')
+    } finally {
+      setBuscandoPartes(false)
     }
   }
 
@@ -2849,7 +2902,21 @@ export default function Expedientes({ session }) {
       >
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
           <Field label="Número de expediente *">
-            <input style={inputStyle} value={form.num} onChange={e => setF('num', e.target.value)} placeholder="Ej: 1234/2026"/>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input style={{ ...inputStyle, flex: 1 }} value={form.num} onChange={e => setF('num', e.target.value)} placeholder="Ej: 1234/2026"/>
+              <button
+                type="button"
+                onClick={buscarEnBoletin}
+                disabled={buscandoPartes || !form.num.trim()}
+                title="Buscar partes en el boletín judicial"
+                style={{ background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: 'var(--radius)', padding: '0 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', opacity: (buscandoPartes || !form.num.trim()) ? 0.5 : 1 }}
+              >
+                {buscandoPartes ? '⟳' : '🔍 Buscar'}
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+              Escribe el número y presiona Buscar para auto-rellenar partes desde el boletín
+            </div>
           </Field>
           
           <Field label="Año de inicio *">
