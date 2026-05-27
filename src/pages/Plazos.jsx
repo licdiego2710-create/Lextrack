@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
-import { fmtFecha } from '../utils/helpers'
+import { fmtFecha, diasHasta, urgencyColor, MATERIAS } from '../utils/helpers'
 import PageHeader from '../components/ui/PageHeader'
 import { useOrg } from '../context/OrgContext'
 import { useToast } from '../context/ToastContext'
 import Modal from '../components/ui/Modal'
+import StatCard from '../components/ui/StatCard'
 
 const DIAS_SEM = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
 
@@ -78,6 +80,48 @@ const PREDEFS = [
 export default function Plazos() {
   const { org } = useOrg()
   const toast = useToast()
+  const navigate = useNavigate()
+
+  // ── Vista activa ────────────────────────────────────────────────────
+  const [vistaActiva, setVistaActiva] = useState('panel') // 'panel' | 'calculadora'
+
+  // ── Estado panel de términos ───────────────────────────────────────
+  const [panelExps, setPanelExps] = useState([])
+  const [panelAuds, setPanelAuds] = useState([])
+  const [panelLoading, setPanelLoading] = useState(true)
+  const [panelFiltros, setPanelFiltros] = useState({ materia: '', responsable: '', urgencia: '' })
+  const [panelBuscar, setPanelBuscar] = useState('')
+
+  useEffect(() => {
+    if (!org?.id) return
+    let alive = true
+    ;(async () => {
+      setPanelLoading(true)
+      const hoyStr = new Date().toISOString().slice(0, 10)
+      const en30   = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)
+      const [{ data: exps }, { data: auds }] = await Promise.all([
+        supabase.from('expedientes')
+          .select('id, num, actor, demandado, juzgado, materia, etapa, termino, proxima_fecha, abogado_responsable, estado')
+          .eq('despacho_id', org.id)
+          .neq('estado', 'Concluido')
+          .or(`termino.lte.${en30},proxima_fecha.lte.${en30}`)
+          .order('termino', { ascending: true, nullsFirst: false }),
+        supabase.from('expediente_audiencias')
+          .select('id, titulo, fecha_hora, lugar, expediente_id, expedientes(num, actor, demandado)')
+          .gte('fecha_hora', hoyStr + 'T00:00:00')
+          .lte('fecha_hora', en30 + 'T23:59:59')
+          .order('fecha_hora', { ascending: true })
+          .limit(30),
+      ])
+      if (!alive) return
+      setPanelExps(exps || [])
+      setPanelAuds(auds || [])
+      setPanelLoading(false)
+    })()
+    return () => { alive = false }
+  }, [org?.id])
+
+  // ── Estado calculadora ─────────────────────────────────────────────
   const [fecha, setFecha] = useState('')
   const [custom, setCustom] = useState([])
   const [inhabiles, setInhabiles] = useState([])
@@ -376,12 +420,198 @@ export default function Plazos() {
     )
   }
 
+  // ── Datos panel filtrados ──────────────────────────────────────────
+  const expsFiltrados = panelExps.filter(e => {
+    const q = panelBuscar.toLowerCase()
+    if (q && !`${e.num} ${e.actor} ${e.demandado} ${e.juzgado || ''}`.toLowerCase().includes(q)) return false
+    if (panelFiltros.materia && e.materia !== panelFiltros.materia) return false
+    if (panelFiltros.responsable && e.abogado_responsable !== panelFiltros.responsable) return false
+    if (panelFiltros.urgencia) {
+      const d = diasHasta(e.termino || e.proxima_fecha)
+      if (panelFiltros.urgencia === 'vencido' && !(d !== null && d < 0)) return false
+      if (panelFiltros.urgencia === 'hoy' && d !== 0) return false
+      if (panelFiltros.urgencia === '3dias' && !(d !== null && d >= 0 && d <= 3)) return false
+      if (panelFiltros.urgencia === '7dias' && !(d !== null && d >= 0 && d <= 7)) return false
+    }
+    return true
+  })
+
+  const kpiVencidos = panelExps.filter(e => { const d = diasHasta(e.termino || e.proxima_fecha); return d !== null && d < 0 }).length
+  const kpiHoy     = panelExps.filter(e => diasHasta(e.termino || e.proxima_fecha) === 0).length
+  const kpiSemana  = panelExps.filter(e => { const d = diasHasta(e.termino || e.proxima_fecha); return d !== null && d >= 0 && d <= 7 }).length
+  const kpiMes     = panelExps.filter(e => { const d = diasHasta(e.termino || e.proxima_fecha); return d !== null && d >= 0 && d <= 30 }).length
+
+  const responsablesDisp = [...new Set(panelExps.map(e => e.abogado_responsable).filter(Boolean))].sort()
+
   return (
     <div>
       <PageHeader
-        title="Calculadora de Plazos"
-        subtitle="Días hábiles según festivos federales y calendario del CJE Jalisco"
+        title="Plazos y Términos"
+        subtitle="Panel de vencimientos activos y calculadora de días hábiles"
       />
+
+      {/* ── Tabs ── */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 4, width: 'fit-content' }}>
+        {[
+          { key: 'panel',       label: '📋 Panel de Términos' },
+          { key: 'calculadora', label: '🧮 Calculadora' },
+        ].map(t => (
+          <button key={t.key} onClick={() => setVistaActiva(t.key)} style={{
+            background: vistaActiva === t.key ? 'var(--primary)' : 'transparent',
+            color: vistaActiva === t.key ? '#fff' : 'var(--text-muted)',
+            border: 'none', borderRadius: 'var(--radius)', padding: '8px 18px',
+            fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all .15s',
+          }}>{t.label}</button>
+        ))}
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════
+          PANEL DE TÉRMINOS
+      ══════════════════════════════════════════════════════════ */}
+      {vistaActiva === 'panel' && (
+        <div>
+          {/* KPIs */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 20 }}>
+            <StatCard title="Vencidos"    value={kpiVencidos} subtitle="Ya pasaron"           color="var(--danger)"  icon={<span style={{fontSize:16}}>⚠️</span>}/>
+            <StatCard title="Vencen hoy"  value={kpiHoy}      subtitle="Fecha límite hoy"      color="var(--warning)" icon={<span style={{fontSize:16}}>🔔</span>}/>
+            <StatCard title="Esta semana" value={kpiSemana}    subtitle="Próximos 7 días"       color="var(--info)"    icon={<span style={{fontSize:16}}>📅</span>}/>
+            <StatCard title="Este mes"    value={kpiMes}       subtitle="Próximos 30 días"      color="var(--primary)" icon={<span style={{fontSize:16}}>📆</span>}/>
+            <StatCard title="Audiencias"  value={panelAuds.length} subtitle="Próximas 30 días" color="#8b5cf6"        icon={<span style={{fontSize:16}}>⚖️</span>}/>
+          </div>
+
+          {/* Filtros */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14, alignItems: 'center' }}>
+            <input
+              placeholder="Buscar expediente, actor, demandado..."
+              value={panelBuscar}
+              onChange={e => setPanelBuscar(e.target.value)}
+              style={{ ...inputStyle, flex: 1, minWidth: 220 }}
+            />
+            <select value={panelFiltros.urgencia} onChange={e => setPanelFiltros(f => ({ ...f, urgencia: e.target.value }))} style={{ ...inputStyle, minWidth: 140 }}>
+              <option value="">Todos</option>
+              <option value="vencido">Vencidos</option>
+              <option value="hoy">Hoy</option>
+              <option value="3dias">Próximos 3 días</option>
+              <option value="7dias">Próximos 7 días</option>
+            </select>
+            <select value={panelFiltros.materia} onChange={e => setPanelFiltros(f => ({ ...f, materia: e.target.value }))} style={{ ...inputStyle, minWidth: 130 }}>
+              <option value="">Todas las materias</option>
+              {MATERIAS.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+            {responsablesDisp.length > 0 && (
+              <select value={panelFiltros.responsable} onChange={e => setPanelFiltros(f => ({ ...f, responsable: e.target.value }))} style={{ ...inputStyle, minWidth: 150 }}>
+                <option value="">Todos los responsables</option>
+                {responsablesDisp.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            )}
+          </div>
+
+          {/* Tabla de términos */}
+          {panelLoading ? (
+            <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 40 }}>Cargando términos...</div>
+          ) : expsFiltrados.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-muted)', fontSize: 14 }}>
+              {panelExps.length === 0 ? 'No hay expedientes con términos próximos en los siguientes 30 días.' : 'Sin resultados para los filtros aplicados.'}
+            </div>
+          ) : (
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden', marginBottom: 20 }}>
+              {expsFiltrados.map((e, idx) => {
+                const fechaRef = e.termino || e.proxima_fecha
+                const d = diasHasta(fechaRef)
+                const u = urgencyColor(d)
+                return (
+                  <div
+                    key={e.id}
+                    onClick={() => navigate(`/app/expedientes?q=${encodeURIComponent(e.num)}`)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px',
+                      borderTop: idx > 0 ? '1px solid var(--border)' : 'none',
+                      cursor: 'pointer', transition: 'background .12s',
+                      background: d !== null && d < 0 ? 'rgba(220,38,38,.04)' : 'transparent',
+                    }}
+                    onMouseEnter={el => el.currentTarget.style.background = 'var(--surface-3)'}
+                    onMouseLeave={el => {
+                      el.currentTarget.style.background = d !== null && d < 0 ? 'rgba(220,38,38,.04)' : 'transparent'
+                    }}
+                  >
+                    {/* Badge urgencia */}
+                    <span style={{ background: u.bg, color: u.color, fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 999, whiteSpace: 'nowrap', minWidth: 60, textAlign: 'center' }}>
+                      {u.label}
+                    </span>
+                    {/* Datos expediente */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--primary)' }}>{e.num}</span>
+                        {e.materia && <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 999, background: 'var(--surface-3)', color: 'var(--text-muted)' }}>{e.materia}</span>}
+                        {e.etapa && <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{e.etapa}</span>}
+                      </div>
+                      <div style={{ fontSize: 13, color: 'var(--text)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {e.actor} <span style={{ color: 'var(--text-muted)' }}>vs.</span> {e.demandado}
+                      </div>
+                      {e.juzgado && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{e.juzgado}</div>}
+                    </div>
+                    {/* Fecha */}
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: u.color }}>{fmtFecha(fechaRef)}</div>
+                      {e.termino && e.proxima_fecha && e.termino !== e.proxima_fecha && (
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Próx: {fmtFecha(e.proxima_fecha)}</div>
+                      )}
+                      {e.abogado_responsable && (
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{e.abogado_responsable}</div>
+                      )}
+                    </div>
+                    {/* Flecha */}
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Audiencias próximas */}
+          {panelAuds.length > 0 && (
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden', marginBottom: 20 }}>
+              <div style={{ padding: '12px 18px', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                ⚖️ Audiencias próximas (30 días)
+              </div>
+              {panelAuds.map((a, idx) => {
+                const fechaAud = a.fecha_hora?.slice(0, 10)
+                const horaAud = a.fecha_hora?.slice(11, 16)
+                const d = diasHasta(fechaAud)
+                const u = urgencyColor(d)
+                const exp = a.expedientes
+                return (
+                  <div
+                    key={a.id}
+                    onClick={() => exp && navigate(`/app/expedientes?q=${encodeURIComponent(exp.num)}`)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 18px', borderTop: idx > 0 ? '1px solid var(--border)' : 'none', cursor: exp ? 'pointer' : 'default' }}
+                    onMouseEnter={el => { if (exp) el.currentTarget.style.background = 'var(--surface-3)' }}
+                    onMouseLeave={el => { el.currentTarget.style.background = 'transparent' }}
+                  >
+                    <span style={{ background: u.bg, color: u.color, fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 999, whiteSpace: 'nowrap', minWidth: 60, textAlign: 'center' }}>{u.label}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{a.titulo}</div>
+                      {exp && <div style={{ fontSize: 12, color: 'var(--primary)', fontWeight: 700 }}>{exp.num} · {exp.actor} vs. {exp.demandado}</div>}
+                      {a.lugar && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{a.lugar}</div>}
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: u.color }}>{fmtFecha(fechaAud)}</div>
+                      {horaAud && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{horaAud} hrs</div>}
+                    </div>
+                    {exp && <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════
+          CALCULADORA (código existente)
+      ══════════════════════════════════════════════════════════ */}
+      {vistaActiva === 'calculadora' && (
+        <div>
 
       <div style={cardStyle}>
         <div style={labelTitle}>Fecha de notificación / fecha del auto</div>
@@ -588,6 +818,8 @@ export default function Plazos() {
             Festivos federales y de descanso obligatorio (LFT): Año Nuevo, Primero de Mayo, Independencia, Navidad, Transmisión Presidencial (1 Oct cada 6 años) y los fines de semana largos conmemorativos (Constitución, Benito Juárez y Revolución Mexicana) aplicados al día lunes correspondiente.
           </div>
         </>
+      )}
+      </div>
       )}
 
       {vinculandoPlazo && (
