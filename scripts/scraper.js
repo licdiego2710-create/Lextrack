@@ -362,7 +362,7 @@ async function extraerFilas(page, juzgadoNombre) {
   return extraerItems(page, juzgadoNombre)
 }
 
-function _extraerFilasLegacy(page, juzgadoNombre) {
+async function _extraerFilasLegacy(page, juzgadoNombre) {
   const resultados = []
 
   try {
