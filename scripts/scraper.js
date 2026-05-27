@@ -27,26 +27,20 @@ const RETRY_WAIT_MS    = 5 * 60 * 1000   // 5 minutos entre reintentos
 const PAGE_TIMEOUT_MS  = 60_000
 const HOY              = process.env.FECHA || new Date().toISOString().slice(0, 10)  // YYYY-MM-DD
 
-// ─── SELECTORES (ajustar si el portal cambia) ────────────────────────────────
+// ─── SELECTORES CJJ Jalisco (Angular SPA, actualizado 2026) ─────────────────
 const SEL = {
-  // Input de fecha — puede ser un <input type="date"> o un datepicker
-  fechaInput:       'input[type="date"], input[placeholder*="fecha"], input[name*="fecha"]',
-  // Botón de búsqueda/consultar
-  btnBuscar:        'button[type="submit"], button:has-text("Buscar"), button:has-text("Consultar")',
-  // Contenedor principal de resultados
-  contenedor:       '.boletin-content, #boletin, main, .content-wrapper',
-  // Selector de juzgado (dropdown)
-  selectJuzgado:    'select[name*="juzgado"], select[name*="organo"], select#juzgado, select#organo',
-  // Filas de la tabla de acuerdos
-  filas:            'table tbody tr, .acuerdo-row, .boletin-row, tr[data-expediente]',
-  // Celda de número de expediente
-  celdaExpediente:  'td:nth-child(1), td.expediente, td[data-field="expediente"]',
-  // Celda de descripción del acuerdo
-  celdaDescripcion: 'td:nth-child(3), td.descripcion, td[data-field="descripcion"]',
-  // Celda de juzgado dentro de la fila
-  celdaJuzgado:     'td:nth-child(2), td.juzgado, td[data-field="juzgado"]',
-  // Indicador de carga
-  loader:           '.loading, .spinner, [aria-busy="true"]',
+  // Selector de juzgado — select con name="judge" y opciones C01, C02...
+  selectJuzgado:    'select[name="judge"]',
+  // Input de fecha
+  fechaInput:       'input[type="date"][name="date"]',
+  // Botón de búsqueda
+  btnBuscar:        'button.search-button',
+  // Cards de resultado (Angular .item)
+  items:            '.item',
+  // Título del item: contiene num expediente y tipo juicio
+  itemTitulo:       '.item-title',
+  // Contenedor de partes y descripción
+  itemTexto:        '.item-text',
 }
 
 // ─── JUZGADOS COMPLETOS DEL CJJ JALISCO ─────────────────────────────────────
@@ -198,7 +192,7 @@ async function scrapearBoletin() {
 
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     locale: 'es-MX',
   })
 
@@ -210,13 +204,13 @@ async function scrapearBoletin() {
   try {
     log(`Navegando a ${BOLETIN_URL}`)
     await page.goto(BOLETIN_URL, { waitUntil: 'networkidle' })
-    await page.waitForTimeout(2000)
+    await page.waitForTimeout(3000)
 
-    // ── Estrategia 1: El portal tiene un selector de juzgado ──
+    // ── Estrategia principal: portal Angular CJJ con select[name="judge"] ──
     const tieneSelector = await page.$(SEL.selectJuzgado)
 
     if (tieneSelector) {
-      log('Portal con selector de juzgado detectado')
+      log('Portal Angular CJJ detectado — scraping por juzgado')
       const opciones = await page.$$eval(SEL.selectJuzgado + ' option', opts =>
         opts.filter(o => o.value).map(o => ({ value: o.value, text: o.textContent.trim() }))
       )
@@ -224,23 +218,29 @@ async function scrapearBoletin() {
 
       for (const opcion of opciones) {
         try {
+          // Seleccionar juzgado
           await page.selectOption(SEL.selectJuzgado, opcion.value)
-          await page.waitForTimeout(1000)
+          await page.waitForTimeout(800)
 
-          // Buscar por fecha si hay input
-          const fechaEl = await page.$(SEL.fechaInput)
-          if (fechaEl) {
-            await fechaEl.fill(HOY)
-            await page.waitForTimeout(500)
+          // Asegurar modo "Por Fecha" (radio button)
+          const radioFecha = await page.$('input[type="radio"][id="date"]')
+          if (radioFecha) await radioFecha.check()
+
+          // Llenar fecha
+          await page.fill(SEL.fechaInput, HOY)
+          await page.waitForTimeout(300)
+
+          // Buscar — esperar a que Angular renderice los resultados
+          await page.click(SEL.btnBuscar)
+          try {
+            // Esperar el texto "resultados encontrados" como señal de carga completa
+            await page.waitForSelector('text=resultados encontrados', { timeout: 10000 })
+          } catch {
+            // Si no aparece, dar tiempo extra
+            await page.waitForTimeout(4000)
           }
 
-          const btnBuscar = await page.$(SEL.btnBuscar)
-          if (btnBuscar) {
-            await btnBuscar.click()
-            await page.waitForTimeout(2000)
-          }
-
-          const encontrados = await extraerFilas(page, opcion.text)
+          const encontrados = await extraerItems(page, opcion.text)
           acuerdos.push(...encontrados)
           log(`  ${opcion.text}: ${encontrados.length} acuerdos`)
         } catch (e) {
@@ -248,9 +248,8 @@ async function scrapearBoletin() {
         }
       }
     } else {
-      // ── Estrategia 2: La página muestra todo el boletín de una vez ──
-      log('Intentando extracción directa del boletín completo')
-
+      // ── Fallback: extracción directa por texto ──
+      log('Sin selector de juzgado, intentando extracción directa')
       const fechaEl = await page.$(SEL.fechaInput)
       if (fechaEl) {
         await fechaEl.fill(HOY)
@@ -260,15 +259,13 @@ async function scrapearBoletin() {
           await page.waitForTimeout(3000)
         }
       }
-
-      const encontrados = await extraerFilas(page, null)
+      const encontrados = await extraerItems(page, null)
       acuerdos.push(...encontrados)
       log(`Extracción directa: ${encontrados.length} acuerdos`)
     }
 
-    // ── Estrategia 3: Buscar por cada juzgado conocido si lo anterior falla ──
     if (acuerdos.length === 0) {
-      log('Sin resultados con estrategias anteriores, intentando búsqueda por texto')
+      log('Sin resultados en items, intentando extracción por texto del body')
       const encontrados = await extraerPorTexto(page)
       acuerdos.push(...encontrados)
     }
@@ -280,13 +277,96 @@ async function scrapearBoletin() {
   return acuerdos
 }
 
-async function extraerFilas(page, juzgadoNombre) {
+/**
+ * Extrae acuerdos desde las cards .item del portal Angular de CJJ
+ * Estructura de cada .item:
+ *   .item-title → "1104/2011 Tipo . Juicio CIVIL SUMARIO HIPO"
+ *   .item-text div:first-child → "ACTOR vs. DEMANDADO"
+ *   .item-text div:last-child → "DESCRIPCIÓN DEL ACUERDO"
+ */
+async function extraerItems(page, juzgadoNombre) {
   const resultados = []
 
   try {
+    // Esperar que aparezcan items o confirmar que no hay resultados
     try {
-      await page.waitForSelector(SEL.loader, { state: 'hidden', timeout: 5000 })
-    } catch { /* sin loader */ }
+      await page.waitForSelector(SEL.items, { timeout: 5000 })
+    } catch { return resultados /* sin items */ }
+
+    const items = await page.$$(SEL.items)
+
+    for (const item of items) {
+      try {
+        // Número de expediente y tipo juicio desde .item-title
+        const tituloEl = await item.$('.item-title')
+        const tituloTexto = tituloEl ? (await tituloEl.textContent()).trim() : ''
+
+        // Limpiar el título: quitar "Tipo", "Juicio", etiquetas internas
+        // Formato: "1104/2011 Tipo . Juicio CIVIL SUMARIO HIPO"
+        const expMatch = tituloTexto.match(/^\s*(\S+)/)
+        const expedienteNum = expMatch ? expMatch[1].trim() : ''
+        if (!expedienteNum || expedienteNum.length < 3) continue
+
+        // Tipo de juicio (después de "Juicio")
+        const tipoMatch = tituloTexto.match(/Juicio\s+(.+)$/i)
+        const tipoJuicio = tipoMatch ? tipoMatch[1].trim().replace(/\s+/g, ' ') : ''
+
+        // Partes desde .item-text — primer div hijo
+        const itemTextoEl = await item.$('.item-text')
+        const divs = itemTextoEl ? await itemTextoEl.$$('div') : []
+
+        let partesTexto = ''
+        let descripcion = ''
+        if (divs.length >= 1) partesTexto = ((await divs[0].textContent()) || '').trim()
+        if (divs.length >= 2) descripcion = ((await divs[1].textContent()) || '').trim()
+        // Si solo hay 1 div, puede ser solo descripción
+        if (divs.length === 1 && !partesTexto.includes(' vs. ')) {
+          descripcion = partesTexto
+          partesTexto = ''
+        }
+
+        // Extraer actor y demandado del texto de partes
+        let actor = null
+        let demandado = null
+        const vsMatch = partesTexto.match(/^(.+?)\s+vs\.\s+(.*)$/i)
+        if (vsMatch) {
+          actor     = vsMatch[1].trim() || null
+          demandado = vsMatch[2].trim() || null
+          if (!demandado) demandado = null
+        } else if (partesTexto) {
+          // No hay "vs." — todo el texto es el actor o parte
+          actor = partesTexto
+        }
+
+        resultados.push({
+          expediente_num: normalizarExpediente(expedienteNum),
+          juzgado:        normalizarJuzgado(juzgadoNombre || ''),
+          materia:        inferirMateria(juzgadoNombre || ''),
+          actor:          actor ? actor.slice(0, 300) : null,
+          demandado:      demandado ? demandado.slice(0, 300) : null,
+          fecha:          HOY,
+          descripcion:    (tipoJuicio + (descripcion ? ' — ' + descripcion : '')).slice(0, 1000) || '',
+          procesado:      false,
+        })
+      } catch { /* item inválido, omitir */ }
+    }
+  } catch (e) {
+    err(`extraerItems: ${e.message}`)
+  }
+
+  return resultados
+}
+
+// Mantener extraerFilas como alias para compatibilidad
+async function extraerFilas(page, juzgadoNombre) {
+  return extraerItems(page, juzgadoNombre)
+}
+
+function _extraerFilasLegacy(page, juzgadoNombre) {
+  const resultados = []
+
+  try {
+    try { /* sin loader */ } catch { }
 
     const filas = await page.$$(SEL.filas)
 
