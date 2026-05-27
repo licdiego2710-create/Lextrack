@@ -18,7 +18,7 @@ const BOLETIN_URL      = 'https://cjj.gob.mx/bulletin'
 const MAX_RETRIES      = 3
 const RETRY_WAIT_MS    = 5 * 60 * 1000   // 5 minutos entre reintentos
 const PAGE_TIMEOUT_MS  = 60_000
-const HOY              = new Date().toISOString().slice(0, 10)  // YYYY-MM-DD
+const HOY              = process.env.FECHA || new Date().toISOString().slice(0, 10)  // YYYY-MM-DD
 
 // ─── SELECTORES (ajustar si el portal cambia) ────────────────────────────────
 const SEL = {

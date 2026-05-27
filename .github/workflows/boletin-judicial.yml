@@ -5,6 +5,11 @@ on:
     # 9:30am hora México (UTC-6) = 15:30 UTC
     - cron: '30 15 * * 1-5'   # Lun–Vie en México
   workflow_dispatch:         # Permite ejecutar manualmente desde GitHub
+    inputs:
+      fecha:
+        description: 'Fecha a scrapear (formato YYYY-MM-DD, vacío = hoy)'
+        required: false
+        default: ''
 
 jobs:
   scraper-y-alertas:
@@ -37,6 +42,7 @@ jobs:
         env:
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FECHA:                ${{ github.event.inputs.fecha }}
         run: |
           node scraper.js
           echo "scraper_ok=true" >> $GITHUB_OUTPUT
@@ -48,6 +54,7 @@ jobs:
         env:
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FECHA:                ${{ github.event.inputs.fecha }}
         run: |
           echo "Esperando 5 minutos antes del reintento 2..."
           sleep 300
@@ -61,6 +68,7 @@ jobs:
         env:
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FECHA:                ${{ github.event.inputs.fecha }}
         run: |
           echo "Esperando 5 minutos antes del reintento 3..."
           sleep 300
