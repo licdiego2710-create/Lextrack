@@ -12,8 +12,8 @@ if (isPlaceholder) {
   rawUrl = 'https://' + rawUrl
 }
 const SUPABASE_URL = rawUrl
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY
-// Sanitizar clave Resend: solo ASCII imprimible, debe empezar con re_
+// Sanitizar todas las claves: solo caracteres ASCII imprimibles (32-126)
+const SUPABASE_SERVICE_ROLE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '').replace(/[^\x20-\x7E]/g, '').trim()
 const rawResendKey = (process.env.RESEND_API_KEY || '').replace(/[^\x20-\x7E]/g, '').trim()
 const RESEND_API_KEY = rawResendKey.startsWith('re_') ? rawResendKey : null
 
