@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { useOrg } from '../context/OrgContext'
 import { useToast } from '../context/ToastContext'
@@ -47,7 +47,6 @@ export default function Prospectos({ session }) {
   const { org, canWrite } = useOrg()
   const toast  = useToast()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
 
   const [prospectos, setProspectos] = useState([])
   const [loading, setLoading]       = useState(true)
@@ -65,8 +64,8 @@ export default function Prospectos({ session }) {
     proximo_seguimiento: '',
   })
 
-  // Modal crear/editar
-  const [modal, setModal]   = useState(false)
+  // Modal crear/editar — se abre automáticamente si la URL tiene action=nuevo
+  const [modal, setModal]   = useState(() => new URLSearchParams(window.location.search).get('action') === 'nuevo')
   const [editId, setEditId] = useState(null)
   const [form, setForm]     = useState(formVacio)
   const [saving, setSaving] = useState(false)
@@ -112,16 +111,6 @@ export default function Prospectos({ session }) {
     }, 0)
     return () => clearTimeout(t)
   }, [cargar])
-
-  // Auto-abrir modal desde URL action=nuevo (p.ej. desde Dashboard)
-  useEffect(() => {
-    if (searchParams.get('action') === 'nuevo' && canWrite) {
-      setForm(formVacio())
-      setEditId(null)
-      setModal(true)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   // ── CRUD ─────────────────────────────────────────────────────
   function abrirNuevo() {

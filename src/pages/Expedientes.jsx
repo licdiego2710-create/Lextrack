@@ -160,7 +160,7 @@ export default function Expedientes({ session }) {
     loadConfig()
   }, [org?.id])
 
-  const [modal, setModal] = useState(false)
+  const [modal, setModal] = useState(() => new URLSearchParams(window.location.search).get('action') === 'nuevo')
   const [editId, setEditId] = useState(null)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState(() => formVacio(session?.user?.email || ''))
@@ -290,15 +290,6 @@ export default function Expedientes({ session }) {
 
   useEffect(() => { cargar() }, [cargar])
 
-  // Auto-abrir modal desde URL action=nuevo (p.ej. desde Dashboard)
-  useEffect(() => {
-    if (searchParams.get('action') === 'nuevo' && canWrite) {
-      setForm(formVacio(session?.user?.email || ''))
-      setEditId(null)
-      setModal(true)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   // Filtrado de expedientes
   const lista = expedientes.filter(e => {

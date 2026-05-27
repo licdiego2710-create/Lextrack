@@ -16,13 +16,15 @@ if (isPlaceholder) {
 }
 const SUPABASE_URL    = rawUrl
 const SUPABASE_KEY    = process.env.SUPABASE_SERVICE_KEY
-const RESEND_API_KEY  = process.env.RESEND_API_KEY
-const FROM_EMAIL      = process.env.FROM_EMAIL || 'alertas@lextrackmx.com'
-const APP_URL         = process.env.APP_URL || 'https://lextrackmx2710.netlify.app'
+// Sanitizar clave: solo caracteres ASCII imprimibles (32-126)
+const rawResendKey = (process.env.RESEND_API_KEY || '').replace(/[^\x20-\x7E]/g, '').trim()
+const RESEND_API_KEY  = rawResendKey.startsWith('re_') ? rawResendKey : null
+const FROM_EMAIL      = (process.env.FROM_EMAIL || 'alertas@lextrackmx.com').replace(/[^\x20-\x7E]/g, '').trim()
+const APP_URL         = (process.env.APP_URL || 'https://lextrackmx2710.netlify.app').replace(/[^\x20-\x7E]/g, '').trim()
 const HOY             = new Date().toISOString().slice(0, 10)
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
-const resend   = new Resend(RESEND_API_KEY)
+const resend   = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null
 
 function log(msg) { console.log(`[${new Date().toISOString()}] ${msg}`) }
 function err(msg) { console.error(`[${new Date().toISOString()}] ERROR: ${msg}`) }
