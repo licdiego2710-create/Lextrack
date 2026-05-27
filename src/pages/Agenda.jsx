@@ -16,6 +16,7 @@ const TIPO_COLOR = {
 export default function Agenda({ session }) {
   const [expedientes, setExpedientes] = useState([])
   const [tareas, setTareas] = useState([])
+  const [audiencias, setAudiencias] = useState([])
   const [fecha, setFecha] = useState(() => new Date())
   const [seleccionado, setSeleccionado] = useState(() => new Date().toISOString().slice(0, 10))
 
@@ -23,13 +24,15 @@ export default function Agenda({ session }) {
     if (!session) return
     let alive = true
     ;(async () => {
-      const [{ data: exps }, { data: tars }] = await Promise.all([
+      const [{ data: exps }, { data: tars }, { data: auds }] = await Promise.all([
         supabase.from('expedientes').select('*'),
         supabase.from('tareas').select('*'),
+        supabase.from('expediente_audiencias').select('*'),
       ])
       if (!alive) return
       setExpedientes(exps || [])
       setTareas(tars || [])
+      setAudiencias(auds || [])
     })()
     return () => { alive = false }
   }, [session])
@@ -53,6 +56,22 @@ export default function Agenda({ session }) {
   })
   tareas.forEach(t => {
     if (t.fecha_limite && t.estado !== 'Completada') push(t.fecha_limite, { tipo: 'tarea', titulo: t.titulo, sub: [t.responsable, t.expediente].filter(Boolean).join(' · ') })
+  })
+  audiencias.forEach(a => {
+    if (a.fecha_hora) {
+      const fechaStr = a.fecha_hora.slice(0, 10)
+      const e = expedientes.find(x => x.id === a.expediente_id)
+      const expNum = e ? `Exp. ${e.num}` : ''
+      let horaStr = ''
+      try {
+        const d = new Date(a.fecha_hora)
+        horaStr = d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true })
+      } catch {
+        // Safe fallback
+      }
+      const subInfo = [horaStr, a.lugar, expNum].filter(Boolean).join(' · ')
+      push(fechaStr, { tipo: 'audiencia', titulo: `Audiencia: ${a.titulo}`, sub: subInfo })
+    }
   })
 
   const celdas = []

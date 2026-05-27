@@ -72,7 +72,26 @@ export const iniciales = (nombre) => {
 export const capitalize = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : ''
 
 // Constantes del dominio jurídico mexicano.
-export const ETAPAS = ['Admisión', 'Emplazamiento', 'Etapa Probatoria', 'Alegatos', 'Sentencia', 'Ejecución / Embargo', 'Recursos', 'Archivo']
+export const ETAPAS = [
+  'Captura inicial',
+  'Demanda presentada',
+  'Radicación',
+  'Emplazamiento pendiente',
+  'Emplazado',
+  'Contestación pendiente',
+  'Audiencia',
+  'Pruebas',
+  'Alegatos',
+  'Sentencia',
+  'Ejecución de sentencia',
+  'Embargo',
+  'Avalúo',
+  'Remate',
+  'Adjudicación',
+  'Archivo',
+  'Suspendido',
+  'Concluido'
+]
 
 export const JUZGADOS_JALISCO = [
   { grupo: 'Civiles',     items: ['Primero Civil','Segundo Civil','Tercero Civil','Cuarto Civil','Quinto Civil','Sexto Civil','Séptimo Civil','Octavo Civil','Noveno Civil','Décimo Civil','Décimo Primero Civil','Décimo Segundo Civil','Décimo Tercero Civil'] },

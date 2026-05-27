@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts'
 import { supabase } from '../supabaseClient'
 import { diasHasta, fmtFecha, urgencyColor, MATERIAS } from '../utils/helpers'
 import StatCard from '../components/ui/StatCard'
-import StatusBadge from '../components/ui/StatusBadge'
 import PageHeader from '../components/ui/PageHeader'
 import EmptyState from '../components/ui/EmptyState'
 import { useOrg } from '../context/OrgContext'
@@ -17,10 +17,13 @@ const ESTADO_COLORS = {
 
 export default function Dashboard({ session }) {
   const { miembro } = useOrg()
+  const navigate = useNavigate()
   const isCliente = miembro?.rol === 'cliente'
+  
   const [expedientes, setExpedientes] = useState([])
-  const [tareasPend, setTareasPend] = useState(0)
   const [boletinHoy, setBoletinHoy] = useState([])
+  const [prospectos, setProspectos] = useState([])
+  const [audienciasProximas, setAudienciasProximas] = useState(0)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -30,20 +33,26 @@ export default function Dashboard({ session }) {
       const hoy = new Date().toISOString().slice(0, 10)
       const queries = [
         supabase.from('expedientes').select('*').order('termino', { ascending: true, nullsFirst: false }),
-        !isCliente
-          ? supabase.from('tareas').select('id, estado')
-          : Promise.resolve({ data: [] }),
         supabase.from('acuerdos_boletin').select('id, expediente_id, descripcion, fecha, leido')
           .gte('creado_en', hoy + 'T00:00:00')
           .lte('creado_en', hoy + 'T23:59:59')
           .order('creado_en', { ascending: false })
           .limit(20),
+        !isCliente
+          ? supabase.from('prospectos').select('*')
+          : Promise.resolve({ data: [] }),
+        supabase.from('expediente_audiencias').select('id').gte('fecha_hora', hoy + 'T00:00:00')
       ]
-      const [{ data }, { data: tars }, { data: actBoletin }] = await Promise.all(queries)
+      
+      const [{ data: expData }, { data: actBoletin }, { data: prospsData }, { data: audsData }] = await Promise.all(queries)
+      
       if (!alive) return
-      setTareasPend((tars || []).filter(t => t.estado === 'Pendiente' || t.estado === 'En proceso').length)
+      
       setBoletinHoy(actBoletin || [])
-      const lista = data || []
+      setProspectos(prospsData || [])
+      setAudienciasProximas(audsData ? audsData.length : 0)
+      
+      const lista = expData || []
       // auto-marcar vencidos
       try {
         const paraVencer = lista.filter(e => e.estado === 'Activo' && e.termino && e.termino < hoy)
@@ -54,21 +63,43 @@ export default function Dashboard({ session }) {
           paraVencer.forEach(e => { e.estado = 'Vencido' })
         }
       } catch { /* ignore */ }
+      
       setExpedientes(lista)
       setLoading(false)
     })()
+    
     return () => { alive = false }
   }, [session, isCliente])
 
-  const total = expedientes.length
+  // KPIs
   const activos = expedientes.filter(e => e.estado === 'Activo').length
-  const urgentes = expedientes.filter(e => { const d = diasHasta(e.termino); return d !== null && d >= 0 && d <= 3 && e.estado === 'Activo' }).length
+  const concluidos = expedientes.filter(e => e.estado === 'Concluido' || e.etapa === 'Concluido').length
+  
+  // Expedientes en ejecución (etapa procesal en alguna de ejecución, embargo, avalúo, remate o adjudicación)
+  const etapasEjecucion = ['Ejecución de sentencia', 'Embargo', 'Avalúo', 'Remate', 'Adjudicación']
+  const enEjecucion = expedientes.filter(e => etapasEjecucion.includes(e.etapa)).length
+  
+  const urgentes = expedientes.filter(e => {
+    const d = diasHasta(e.proxima_fecha || e.termino)
+    return d !== null && d >= 0 && d <= 3 && e.estado === 'Activo'
+  }).length
+  
   const vencidos = expedientes.filter(e => e.estado === 'Vencido').length
+  
+  // Términos próximos a vencer (en los siguientes 7 días)
+  const terminosProximos = expedientes.filter(e => {
+    const d = diasHasta(e.termino)
+    return d !== null && d >= 0 && d <= 7 && e.estado === 'Activo'
+  }).length
+
+  // Prospectos
+  const prospectosNuevos = prospectos.filter(p => p.etapa === 'Nuevo contacto').length
+  const prospectosSinSeguimiento = prospectos.filter(p => !p.proximo_seguimiento && !['Contratado','No contratado','Perdido'].includes(p.etapa)).length
 
   const expPorId = Object.fromEntries(expedientes.map(e => [e.id, e]))
 
   const pendUrg = expedientes.filter(e => {
-    const d = diasHasta(e.termino)
+    const d = diasHasta(e.proxima_fecha || e.termino)
     return e.estado === 'Activo' && d !== null && d <= 3
   }).slice(0, 5)
 
@@ -89,14 +120,14 @@ export default function Dashboard({ session }) {
   })).filter(d => d.value > 0)
 
   if (loading) {
-    return <PageHeader title="Inicio" subtitle="Cargando..."/>
+    return <PageHeader title="Inicio" subtitle="Cargando resumen de actividad..."/>
   }
 
   return (
     <div>
       <PageHeader
         title="Inicio"
-        subtitle="Resumen general de tu actividad jurídica"
+        subtitle="Resumen general de tu actividad jurídica y despacho"
       />
 
       {(vencidos > 0 || urgentes > 0) && (
@@ -118,24 +149,58 @@ export default function Dashboard({ session }) {
             <div style={{ fontSize: 13 }}>
               {vencidos > 0 && `${vencidos} expediente(s) con término vencido`}
               {vencidos > 0 && urgentes > 0 && ' · '}
-              {urgentes > 0 && `${urgentes} con vencimiento en los próximos 3 días`}
+              {urgentes > 0 && `${urgentes} con vencimiento o fecha límite en los próximos 3 días`}
             </div>
           </div>
         </div>
       )}
 
-      {/* KPIs */}
+      {/* ⚡ Barra de Accesos Rápidos */}
+      <div style={{
+        background: 'var(--surface-3)', border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-lg)', padding: '16px 20px', marginBottom: 24
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 12 }}>
+          ⚡ Accesos Rápidos
+        </div>
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10
+        }}>
+          <button onClick={() => navigate('/app/expedientes?action=nuevo')} style={shortcutBtn}>
+            ➕ Agregar expediente
+          </button>
+          <button onClick={() => navigate('/app/prospectos?action=nuevo')} style={shortcutBtn}>
+            👥 Agregar prospecto
+          </button>
+          <button onClick={() => navigate('/app/expedientes')} style={shortcutBtn}>
+            ⏳ Términos próximos
+          </button>
+          <button onClick={() => navigate('/app/agenda')} style={shortcutBtn}>
+            📅 Próximas audiencias
+          </button>
+          <button onClick={() => navigate('/app/expedientes')} style={shortcutBtn}>
+            ⚖️ Expedientes por etapa
+          </button>
+          <button onClick={() => navigate('/app/prospectos?seguimiento=pendiente')} style={shortcutBtn}>
+            👥 Prospectos pendientes
+          </button>
+        </div>
+      </div>
+
+      {/* 📊 Tarjetas de Estado / KPIs */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-        gap: 14,
+        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+        gap: 12,
         marginBottom: 24,
       }}>
-        <StatCard title="Total" value={total} subtitle="Expedientes" color="var(--primary)"/>
-        <StatCard title="Activos" value={activos} subtitle="En seguimiento" color="var(--success)"/>
-        <StatCard title="Urgentes" value={urgentes} subtitle="Vencen en ≤3 días" color="var(--warning)"/>
-        <StatCard title="Vencidos" value={vencidos} subtitle="Requieren acción" color="var(--danger)"/>
-        {!isCliente && <StatCard title="Tareas" value={tareasPend} subtitle="Pendientes" color="#8b5cf6"/>}
+        <StatCard title="Exp. Activos" value={activos} subtitle="En trámite" color="var(--primary)"/>
+        <StatCard title="Vencimientos" value={terminosProximos} subtitle="Próximos 7 días" color="var(--warning)"/>
+        <StatCard title="Audiencias" value={audienciasProximas} subtitle="Próximas programadas" color="var(--info)"/>
+        <StatCard title="Prospectos Nuevos" value={prospectosNuevos} subtitle="Sin contactar" color="#8b5cf6"/>
+        <StatCard title="Sin Seguimiento" value={prospectosSinSeguimiento} subtitle="Prospectos sin fecha" color="var(--danger)"/>
+        <StatCard title="En Ejecución" value={enEjecucion} subtitle="Etapa ejecución/remate" color="#ec4899"/>
+        <StatCard title="Exp. Concluidos" value={concluidos} subtitle="Historial cerrado" color="var(--success)"/>
       </div>
 
       {/* Gráficas */}
@@ -194,7 +259,7 @@ export default function Dashboard({ session }) {
         </div>
       </div>
 
-      {/* Listas */}
+      {/* Listas de Trabajo */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
@@ -202,13 +267,13 @@ export default function Dashboard({ session }) {
         marginBottom: 24,
       }}>
         <div style={chartCard}>
-          <div style={chartTitle}>Requieren atención hoy</div>
+          <div style={chartTitle}>Urgencias (Próximos 3 días)</div>
           {pendUrg.length === 0 ? (
-            <EmptyState title="Todo al día" subtitle="No hay expedientes urgentes."/>
+            <EmptyState title="Todo al día" subtitle="No hay expedientes con plazos urgentes."/>
           ) : (
             <div>
               {pendUrg.map(e => {
-                const d = diasHasta(e.termino)
+                const d = diasHasta(e.proxima_fecha || e.termino)
                 const u = urgencyColor(d)
                 return (
                   <div key={e.id} style={listRow}>
@@ -229,7 +294,7 @@ export default function Dashboard({ session }) {
         </div>
 
         <div style={chartCard}>
-          <div style={chartTitle}>Próximos 7 días</div>
+          <div style={chartTitle}>Vencimientos (Próximos 7 días)</div>
           {pend7.length === 0 ? (
             <EmptyState title="Sin vencimientos" subtitle="No hay términos para los próximos 7 días."/>
           ) : (
@@ -332,4 +397,20 @@ const listRow = {
   display: 'flex', alignItems: 'center', gap: 10,
   padding: '10px 0',
   borderBottom: '1px solid var(--border)',
+}
+const shortcutBtn = {
+  background: 'var(--surface)',
+  color: 'var(--text)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius)',
+  padding: '10px 12px',
+  fontSize: 12,
+  fontWeight: 600,
+  cursor: 'pointer',
+  textAlign: 'center',
+  transition: 'all 0.15s ease',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 8,
 }

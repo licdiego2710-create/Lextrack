@@ -69,12 +69,18 @@ function BuscarAmparoCJF({ onBuscar, cargando }) {
 const formVacio = (email = '') => ({
   num: '', materia: 'Mercantil', tipo: 'Juicio Ordinario Mercantil',
   juzgado: '', cve_juz: '', actor: '', demandado: '',
-  etapa: 'Admisión', estado: 'Activo',
+  etapa: 'Captura inicial', estado: 'Activo',
   tipoPromo: '', promoDesc: '',
   termino: '', prioridad: 'Normal', notas: '',
   alertas_boletin: true,
   email_notificacion: email,
   cliente_id: '',
+  anio: new Date().getFullYear(),
+  partido_judicial: 'Primer Partido Judicial (Guadalajara)',
+  abogado_responsable: '',
+  fecha_inicio: new Date().toISOString().slice(0, 10),
+  ultimo_acuerdo: '',
+  proxima_fecha: '',
 })
 
 export default function Expedientes({ session }) {
@@ -84,9 +90,21 @@ export default function Expedientes({ session }) {
   const [expedientes, setExpedientes] = useState([])
   const [loading, setLoading] = useState(true)
   const [buscar, setBuscar] = useState(() => searchParams.get('q') || '')
-  const [filtros, setFiltros] = useState({ materia: '', estado: '' })
+  
+  // Filtros extendidos
+  const [filtros, setFiltros] = useState({
+    materia: '',
+    juzgado: '',
+    tipo: '',
+    etapa: '',
+    responsable: '',
+    estado: '',
+  })
+  
   const [clientes, setClientes] = useState([])
+  const [abogados, setAbogados] = useState([]) // Miembros del equipo
 
+  // Cargar clientes
   useEffect(() => {
     async function cargarClientes() {
       if (!org?.id) return
@@ -109,6 +127,20 @@ export default function Expedientes({ session }) {
       }
     }
     cargarClientes()
+  }, [org?.id])
+
+  // Cargar team members (abogados, admins, asistentes)
+  useEffect(() => {
+    if (!org?.id) return
+    ;(async () => {
+      const { data } = await supabase
+        .from('despacho_miembros')
+        .select('user_id, rol, user_profiles(nombre, email)')
+        .eq('despacho_id', org.id)
+        .eq('activo', true)
+        .in('rol', ['admin', 'abogado', 'asistente'])
+      setAbogados(data || [])
+    })()
   }, [org?.id])
 
   const [despachoConfig, setDespachoConfig] = useState(null)
@@ -135,11 +167,46 @@ export default function Expedientes({ session }) {
 
   const [detalleExp, setDetalleExp] = useState(null)
   const [tabDetalle, setTabDetalle] = useState('info')
+  
+  // Tab Partes
+  const [partes, setPartes] = useState([])
+  const [cargandoPartes, setCargandoPartes] = useState(false)
+  const [pForm, setPForm] = useState({ nombre: '', rol: 'Actor', domicilio: '', correo: '', telefono: '', observaciones: '' })
+  const [pSaving, setPSaving] = useState(false)
+
+  // Tab Actuaciones (Historial)
   const [historial, setHistorial] = useState([])
-  const [hForm, setHForm] = useState({ fecha: '', descripcion: '' })
+  const [hForm, setHForm] = useState({
+    fecha: new Date().toISOString().slice(0, 10),
+    descripcion: '',
+    tipo_actuacion: 'Acuerdo',
+    genera_termino: false,
+    fecha_vencimiento: '',
+    responsable: '',
+    estatus_cumplimiento: 'Pendiente',
+  })
   const [hSaving, setHSaving] = useState(false)
+  
+  // Tab Audiencias
+  const [audiencias, setAudiencias] = useState([])
+  const [cargandoAudiencias, setCargandoAudiencias] = useState(false)
+  const [audForm, setAudForm] = useState({ titulo: '', fecha_hora: '', lugar: '', observaciones: '' })
+  const [audSaving, setAudSaving] = useState(false)
+
+  // Tab Documentos (Archivos)
   const [archivos, setArchivos] = useState([])
   const [uploading, setUploading] = useState(false)
+  
+  // Tab Fuentes Externas
+  const [fuentes, setFuentes] = useState([])
+  const [cargandoFuentes, setCargandoFuentes] = useState(false)
+  const [fExtForm, setFExtForm] = useState({ nombre: 'Boletín Judicial Jalisco', tipo: 'Boletín', url: '', num_externo: '', organo: '', ultima_consulta: new Date().toISOString().slice(0, 10), observaciones: '' })
+  const [fExtSaving, setFExtSaving] = useState(false)
+
+  // Tab Observaciones
+  const [obsText, setObsText] = useState('')
+  const [obsSaving, setObsSaving] = useState(false)
+
   const [cargandoActuaciones, setCargandoActuaciones] = useState(false)
   const [cargandoArchivos, setCargandoArchivos] = useState(false)
   const [cargandoAcuerdos, setCargandoAcuerdos] = useState(false)
@@ -155,7 +222,7 @@ export default function Expedientes({ session }) {
   const [consultaMasiva, setConsultaMasiva] = useState(false)
   const [masivaProg, setMasivaProg] = useState({ total: 0, actual: 0, nuevos: 0, texto: '' })
 
-  // ── Amparos Federales (CJF Tercer Circuito) ──────────────
+  // Amparos Federales (CJF Tercer Circuito)
   const [amparos, setAmparos]               = useState([])
   const [cargandoAmparos, setCargandoAmparos] = useState(false)
   const [errorAmparos, setErrorAmparos]     = useState(null)
@@ -172,7 +239,7 @@ export default function Expedientes({ session }) {
   const [acuerdosAmparo, setAcuerdosAmparo]   = useState({})
   const [cargandoHistorial, setCargandoHistorial] = useState(null)
 
-  // ── Generador de Reportes de Clientes (WhatsApp) ─────────
+  // Generador de Reportes de Clientes (WhatsApp)
   const [modalReporte, setModalReporte] = useState(false)
   const [repFecha, setRepFecha] = useState('')
   const [repDescripcion, setRepDescripcion] = useState('')
@@ -184,8 +251,7 @@ export default function Expedientes({ session }) {
   const [guardarEnHistorial, setGuardarEnHistorial] = useState(false)
   const [copiado, setCopiado] = useState(false)
 
-
-  // ── Cobranza y Facturación a Clientes ────────────────────
+  // Cobranza y Facturación a Clientes
   const [horas, setHoras] = useState([])
   const [gastos, setGastos] = useState([])
   const [cargandoCobranza, setCargandoCobranza] = useState(false)
@@ -224,14 +290,29 @@ export default function Expedientes({ session }) {
 
   useEffect(() => { cargar() }, [cargar])
 
-  // Filtro
+  // Filtrado de expedientes
   const lista = expedientes.filter(e => {
     const q = buscar.toLowerCase()
-    if (q && !`${e.num} ${e.actor} ${e.demandado} ${e.juzgado || ''}`.toLowerCase().includes(q)) return false
+    if (q && !`${e.num} ${e.actor} ${e.demandado} ${e.juzgado || ''} ${e.abogado_responsable || ''}`.toLowerCase().includes(q)) return false
+    
     if (filtros.materia && e.materia !== filtros.materia) return false
-    if (filtros.estado && e.estado !== filtros.estado) return false
+    if (filtros.juzgado && e.juzgado !== filtros.juzgado) return false
+    if (filtros.tipo && e.tipo !== filtros.tipo) return false
+    if (filtros.etapa && e.etapa !== filtros.etapa) return false
+    if (filtros.responsable && e.abogado_responsable !== filtros.responsable) return false
+    
+    if (filtros.estado) {
+      if (filtros.estado === 'Activo' && e.estado !== 'Activo') return false
+      if (filtros.estado === 'Concluido' && e.estado !== 'Concluido') return false
+      if (filtros.estado === 'Suspendido' && e.estado !== 'Suspendido') return false
+    }
     return true
   })
+
+  // Listas de filtros dinámicas
+  const juzgadosExistentes = Array.from(new Set(expedientes.map(e => e.juzgado).filter(Boolean))).sort()
+  const tiposJuicioExistentes = Array.from(new Set(expedientes.map(e => e.tipo).filter(Boolean))).sort()
+  const responsablesExistentes = Array.from(new Set(expedientes.map(e => e.abogado_responsable).filter(Boolean))).sort()
 
   // KPIs
   const total = expedientes.length
@@ -260,6 +341,12 @@ export default function Expedientes({ session }) {
       alertas_boletin: exp.alertas_boletin !== false,
       email_notificacion: exp.email_notificacion || exp.user_email || session?.user?.email || '',
       cliente_id: exp.cliente_id || '',
+      anio: exp.anio || new Date().getFullYear(),
+      partido_judicial: exp.partido_judicial || 'Primer Partido Judicial (Guadalajara)',
+      abogado_responsable: exp.abogado_responsable || '',
+      fecha_inicio: exp.fecha_inicio || '',
+      ultimo_acuerdo: exp.ultimo_acuerdo || '',
+      proxima_fecha: exp.proxima_fecha || '',
     })
     setEditId(exp.id); setModal(true)
     setDetalleExp(null)
@@ -275,8 +362,6 @@ export default function Expedientes({ session }) {
     setF('cve_juz', code || '')
   }
 
-
-
   async function guardar() {
     if (!form.num.trim() || !form.actor.trim() || !form.demandado.trim()) {
       alert('Número, Actor y Demandado son obligatorios.'); return
@@ -285,17 +370,26 @@ export default function Expedientes({ session }) {
     const { tipoPromo, promoDesc, ...rest } = form
     const actuacion = tipoPromo && promoDesc ? `${tipoPromo}: ${promoDesc}` : tipoPromo || promoDesc || ''
     const cveJuz = form.cve_juz || getCjjCode(form.juzgado) || null
+    
     const payload = {
       ...rest,
       cliente_id: form.cliente_id || null,
-      actuacion, termino: form.termino || null,
+      actuacion,
+      termino: form.termino || null,
       user_id: session.user.id,
       despacho_id: org?.id || null,
       actualizado_en: new Date().toISOString(),
       alertas_boletin: form.alertas_boletin,
       email_notificacion: form.alertas_boletin ? (form.email_notificacion || session.user.email) : null,
       cve_juz: cveJuz,
+      anio: form.anio ? parseInt(form.anio) : null,
+      partido_judicial: form.partido_judicial || null,
+      abogado_responsable: form.abogado_responsable || null,
+      fecha_inicio: form.fecha_inicio || null,
+      ultimo_acuerdo: form.ultimo_acuerdo || null,
+      proxima_fecha: form.proxima_fecha || null,
     }
+    
     let error, data
     if (editId) {
       ;({ error } = await supabase.from('expedientes').update(payload).eq('id', editId))
@@ -321,6 +415,8 @@ export default function Expedientes({ session }) {
     toast(editId ? 'Expediente actualizado' : '✅ Expediente creado')
     setModal(false)
     await cargar()
+    
+    // Auto-scraping CJJ al crear
     if (!editId && data && cveJuz) {
       toast('🔍 Consultando boletín del CJJ automáticamente...')
       try {
@@ -370,19 +466,57 @@ export default function Expedientes({ session }) {
     cargar()
   }
 
-  // Detalle, historial, archivos
+  // Detalle, partes, historial, audiencias, archivos, fuentes
+  async function cargarPartes(expId) {
+    setCargandoPartes(true)
+    const { data } = await supabase.from('expediente_partes').select('*').eq('expediente_id', expId).order('creado_en', { ascending: true })
+    setPartes(data || [])
+    setCargandoPartes(false)
+  }
+
+  async function guardarParte() {
+    if (!pForm.nombre.trim()) { toast('El nombre es obligatorio', 'error'); return }
+    setPSaving(true)
+    const { error } = await supabase.from('expediente_partes').insert({
+      ...pForm,
+      expediente_id: detalleExp.id,
+      despacho_id: org.id
+    })
+    setPSaving(false)
+    if (error) {
+      toast('Error al guardar parte: ' + error.message, 'error')
+    } else {
+      toast('✅ Parte procesal agregada')
+      setPForm({ nombre: '', rol: 'Actor', domicilio: '', correo: '', telefono: '', observaciones: '' })
+      cargarPartes(detalleExp.id)
+    }
+  }
+
+  async function eliminarParte(id) {
+    if (!confirm('¿Eliminar esta parte?')) return
+    const { error } = await supabase.from('expediente_partes').delete().eq('id', id)
+    if (error) {
+      toast('Error al eliminar: ' + error.message, 'error')
+    } else {
+      toast('Parte eliminada', 'warning')
+      cargarPartes(detalleExp.id)
+    }
+  }
+
   async function cargarHistorial(expId) {
     setCargandoActuaciones(true)
     const { data } = await supabase.from('actuaciones').select('*').eq('expediente_id', expId).order('fecha', { ascending: false })
     setHistorial(data || [])
     setCargandoActuaciones(false)
   }
+
   async function cargarArchivos(expId) {
     setCargandoArchivos(true)
     const { data } = await supabase.from('documentos').select('*').eq('expediente_id', expId).order('creado_en', { ascending: false })
     setArchivos(data || [])
     setCargandoArchivos(false)
   }
+
   async function cargarAcuerdos(expId) {
     setCargandoAcuerdos(true)
     const { data } = await supabase.from('acuerdos_boletin').select('*').eq('expediente_id', expId).order('fecha', { ascending: false })
@@ -390,7 +524,94 @@ export default function Expedientes({ session }) {
     setCargandoAcuerdos(false)
   }
 
-  // ── Cobranza y Facturación a Clientes ────────────────────
+  async function cargarAudiencias(expId) {
+    setCargandoAudiencias(true)
+    const { data } = await supabase.from('expediente_audiencias').select('*').eq('expediente_id', expId).order('fecha_hora', { ascending: true })
+    setAudiencias(data || [])
+    setCargandoAudiencias(false)
+  }
+
+  async function guardarAudiencia() {
+    if (!audForm.titulo.trim() || !audForm.fecha_hora) { toast('Título y Fecha/Hora son obligatorios', 'error'); return }
+    setAudSaving(true)
+    const { error } = await supabase.from('expediente_audiencias').insert({
+      ...audForm,
+      expediente_id: detalleExp.id,
+      despacho_id: org.id
+    })
+    setAudSaving(false)
+    if (error) {
+      toast('Error al programar audiencia: ' + error.message, 'error')
+    } else {
+      toast('✅ Audiencia programada')
+      setAudForm({ titulo: '', fecha_hora: '', lugar: '', observaciones: '' })
+      cargarAudiencias(detalleExp.id)
+    }
+  }
+
+  async function eliminarAudiencia(id) {
+    if (!confirm('¿Eliminar esta audiencia?')) return
+    const { error } = await supabase.from('expediente_audiencias').delete().eq('id', id)
+    if (error) {
+      toast('Error: ' + error.message, 'error')
+    } else {
+      toast('Audiencia eliminada', 'warning')
+      cargarAudiencias(detalleExp.id)
+    }
+  }
+
+  async function cargarFuentes(expId) {
+    setCargandoFuentes(true)
+    const { data } = await supabase.from('expediente_fuentes').select('*').eq('expediente_id', expId).order('creado_en', { ascending: true })
+    setFuentes(data || [])
+    setCargandoFuentes(false)
+  }
+
+  async function guardarFuente() {
+    if (!fExtForm.nombre.trim() || !fExtForm.url.trim()) { toast('Nombre y URL son obligatorios', 'error'); return }
+    setFExtSaving(true)
+    const { error } = await supabase.from('expediente_fuentes').insert({
+      ...fExtForm,
+      expediente_id: detalleExp.id,
+      despacho_id: org.id
+    })
+    setFExtSaving(false)
+    if (error) {
+      toast('Error al guardar fuente: ' + error.message, 'error')
+    } else {
+      toast('✅ Fuente registrada')
+      setFExtForm({ nombre: 'Boletín Judicial Jalisco', tipo: 'Boletín', url: '', num_externo: '', organo: '', ultima_consulta: new Date().toISOString().slice(0, 10), observaciones: '' })
+      cargarFuentes(detalleExp.id)
+    }
+  }
+
+  async function eliminarFuente(id) {
+    if (!confirm('¿Eliminar esta fuente?')) return
+    const { error } = await supabase.from('expediente_fuentes').delete().eq('id', id)
+    if (error) {
+      toast('Error: ' + error.message, 'error')
+    } else {
+      toast('Fuente eliminada', 'warning')
+      cargarFuentes(detalleExp.id)
+    }
+  }
+
+  async function guardarObservaciones() {
+    obsSaving ? null : setObsSaving(true)
+    const { error } = await supabase.from('expedientes')
+      .update({ notas: obsText, actualizado_en: new Date().toISOString() })
+      .eq('id', detalleExp.id)
+    setObsSaving(false)
+    if (error) {
+      toast('Error al guardar: ' + error.message, 'error')
+    } else {
+      toast('✅ Observaciones actualizadas')
+      setDetalleExp(prev => ({ ...prev, notas: obsText }))
+      setExpedientes(prev => prev.map(e => e.id === detalleExp.id ? { ...e, notas: obsText } : e))
+    }
+  }
+
+  // Cobranza y Facturación
   async function cargarCobranza(expId) {
     setCargandoCobranza(true)
     const { data: dataHoras } = await supabase.from('registro_horas').select('*').eq('expediente_id', expId).order('fecha', { ascending: false })
@@ -659,15 +880,31 @@ export default function Expedientes({ session }) {
   function abrirDetalle(exp) {
     setDetalleExp(exp)
     setTabDetalle(exp.nuevo_acuerdo ? 'boletin' : 'info')
-    setHForm({ fecha: new Date().toISOString().slice(0, 10), descripcion: '' })
+    setHForm({
+      fecha: new Date().toISOString().slice(0, 10),
+      descripcion: '',
+      tipo_actuacion: 'Acuerdo',
+      genera_termino: false,
+      fecha_vencimiento: '',
+      responsable: '',
+      estatus_cumplimiento: 'Pendiente',
+    })
     setAcuerdosCJJ(null); setErrorCJJ(null)
     setAmparos([]); setErrorAmparos(null)
-    cargarHistorial(exp.id); cargarArchivos(exp.id); cargarAcuerdos(exp.id)
+    setObsText(exp.notas || exp.notes || '')
+    
+    cargarHistorial(exp.id)
+    cargarArchivos(exp.id)
+    cargarAcuerdos(exp.id)
     cargarAmparosFederales(exp.id)
     cargarCobranza(exp.id)
+    
+    // Nuevas relaciones
+    cargarPartes(exp.id)
+    cargarAudiencias(exp.id)
+    cargarFuentes(exp.id)
   }
 
-  // ── Generador de Reportes de Clientes (WhatsApp) ─────────
   async function buscarContactoParaReporte(actorNombre, demandadoNombre) {
     if (!org?.id) return
     setCargandoContactoReporte(true)
@@ -684,7 +921,6 @@ export default function Expedientes({ session }) {
       
       if (!error && data) {
         setContactosDisponibles(data)
-        // Intentar pre-llenar con el actor si tiene teléfono
         const actorContact = data.find(c => c.nombre === actorNombre)
         if (actorContact && actorContact.telefono) {
           setRepContactoTelefono(actorContact.telefono)
@@ -770,9 +1006,7 @@ export default function Expedientes({ session }) {
     setModalReporte(false)
   }
 
-
-  // ── Amparos Federales ──────────────────────────────────────
-
+  // Amparos Federales
   async function cargarAmparosFederales(expId) {
     setCargandoAmparos(true); setErrorAmparos(null)
     try {
@@ -890,6 +1124,7 @@ export default function Expedientes({ session }) {
     }
   }
 
+  // Consulta masiva y manual CJJ
   async function consultarMasivoCJJ() {
     const conCodigo = expedientes.filter(e => e.estado === 'Activo' && (e.cve_juz || getCjjCode(e.juzgado)))
     if (conCodigo.length === 0) { toast('No hay expedientes activos con código CJJ registrado', 'warning'); return }
@@ -917,11 +1152,11 @@ export default function Expedientes({ session }) {
             setMasivaProg(p => ({ ...p, nuevos: p.nuevos + nuevos.length }))
           }
         }
-      } catch { /* si un exp falla no bloqueamos el resto */ }
+      } catch { /* ignore */ }
     }
     setConsultaMasiva(false)
     await cargar()
-    toast(`✅ Consulta masiva completada — ${totalNuevos} acuerdo(s) nuevo(s) en ${conCodigo.length} expedientes`)
+    toast(`... Consulta masiva completada — ${totalNuevos} acuerdo(s) nuevo(s) en ${conCodigo.length} expedientes`)
   }
 
   async function consultarCJJ(exp) {
@@ -976,15 +1211,26 @@ export default function Expedientes({ session }) {
   async function guardarActuacion() {
     if (!hForm.descripcion.trim()) return
     setHSaving(true)
-    await supabase.from('actuaciones').insert({
+    
+    const { error } = await supabase.from('actuaciones').insert({
       expediente_id: detalleExp.id,
       descripcion: hForm.descripcion,
       fecha: hForm.fecha || new Date().toISOString().slice(0, 10),
+      tipo_actuacion: hForm.tipo_actuacion,
+      genera_termino: hForm.genera_termino,
+      fecha_vencimiento: hForm.genera_termino ? (hForm.fecha_vencimiento || null) : null,
+      responsable: hForm.responsable || null,
+      estatus_cumplimiento: hForm.estatus_cumplimiento,
       user_id: session.user.id,
       despacho_id: org?.id || null,
       creado_en: new Date().toISOString(),
     })
+    
     setHSaving(false)
+    if (error) {
+      toast('Error al guardar actuación: ' + error.message, 'error')
+      return
+    }
     
     // Registrar en bitácora
     if (org?.id) {
@@ -997,9 +1243,30 @@ export default function Expedientes({ session }) {
       })
     }
 
-    setHForm(f => ({ ...f, descripcion: '' }))
+    setHForm({
+      fecha: new Date().toISOString().slice(0, 10),
+      descripcion: '',
+      tipo_actuacion: 'Acuerdo',
+      genera_termino: false,
+      fecha_vencimiento: '',
+      responsable: '',
+      estatus_cumplimiento: 'Pendiente',
+    })
+    
     cargarHistorial(detalleExp.id)
   }
+
+  async function toggleCumplimientoActuacion(act) {
+    const nuevoEstado = act.estatus_cumplimiento === 'Completada' ? 'Pendiente' : 'Completada'
+    const { error } = await supabase.from('actuaciones').update({ estatus_cumplimiento: nuevoEstado }).eq('id', act.id)
+    if (error) {
+      toast('Error: ' + error.message, 'error')
+    } else {
+      setHistorial(prev => prev.map(a => a.id === act.id ? { ...a, estatus_cumplimiento: nuevoEstado } : a))
+      toast(`Actuación marcada como ${nuevoEstado}`)
+    }
+  }
+
   async function eliminarActuacion(id) {
     await supabase.from('actuaciones').delete().eq('id', id)
     
@@ -1016,6 +1283,7 @@ export default function Expedientes({ session }) {
 
     cargarHistorial(detalleExp.id)
   }
+
   async function subirArchivo(file) {
     if (!file) return
     if (file.size > 20 * 1024 * 1024) { alert('Máximo 20 MB'); return }
@@ -1045,11 +1313,13 @@ export default function Expedientes({ session }) {
 
     setUploading(false); cargarArchivos(detalleExp.id)
   }
+
   async function descargarArchivo(doc) {
     const { data, error } = await supabase.storage.from('documentos').createSignedUrl(doc.path, 120)
     if (error) return alert('No se pudo generar enlace.')
     window.open(data.signedUrl, '_blank')
   }
+
   async function eliminarArchivo(doc) {
     if (!confirm(`¿Eliminar "${doc.nombre}"?`)) return
     await supabase.storage.from('documentos').remove([doc.path])
@@ -1093,8 +1363,8 @@ export default function Expedientes({ session }) {
   }
 
   function exportarCSV() {
-    const cab = 'num,materia,tipo,juzgado,actor,demandado,etapa,estado,actuacion,termino,prioridad,notas'
-    const filas = lista.map(e => [e.num, e.materia, e.tipo, e.juzgado || '', e.actor, e.demandado, e.etapa, e.estado, e.actuacion || '', e.termino || '', e.prioridad || 'Normal', (e.notas || '').replace(/[\n\r]/g, ' ')].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    const cab = 'num,anio,partido_judicial,materia,tipo,juzgado,actor,demandado,etapa,estado,abogado_responsable,fecha_inicio,ultimo_acuerdo,notas'
+    const filas = lista.map(e => [e.num, e.anio || '', e.partido_judicial || '', e.materia, e.tipo, e.juzgado || '', e.actor, e.demandado, e.etapa, e.estado, e.abogado_responsable || '', e.fecha_inicio || '', (e.ultimo_acuerdo || '').replace(/[\n\r]/g, ' '), (e.notas || '').replace(/[\n\r]/g, ' ')].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
     const a = document.createElement('a')
     a.href = URL.createObjectURL(new Blob(['\uFEFF' + cab + '\n' + filas.join('\n')], { type: 'text/csv;charset=utf-8' }))
     a.download = `expedientes_${new Date().toISOString().slice(0, 10)}.csv`; a.click()
@@ -1114,17 +1384,18 @@ export default function Expedientes({ session }) {
 
   return (
     <div style={{ position: 'relative' }}>
-      {/* Animación slide-in para el drawer */}
       <style>{`
         @keyframes slideInRight {
           from { opacity: 0; transform: translateX(32px); }
           to   { opacity: 1; transform: translateX(0); }
         }
+        .filters-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+        .sub-form { background: var(--surface-3); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-bottom: 14px; }
       `}</style>
 
       <PageHeader
         title="Expedientes"
-        subtitle="Administra todos los casos del despacho"
+        subtitle="Módulo de gestión de expedientes judiciales del despacho"
         actions={
           <>
             <button onClick={exportarCSV} style={btnSec}>
@@ -1148,7 +1419,7 @@ export default function Expedientes({ session }) {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 5v14"/><path d="M5 12h14"/>
                 </svg>
-                Nuevo expediente
+                Agregar expediente
               </button>
             )}
           </>
@@ -1166,69 +1437,103 @@ export default function Expedientes({ session }) {
       {/* Layout principal: tabla + drawer lateral */}
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
 
-        {/* ── Columna izquierda: filtros + tabla ── */}
+        {/* Columna izquierda: filtros + tabla */}
         <div style={{ flex: 1, minWidth: 0 }}>
 
-          {/* Toolbar */}
-          <div style={{
-            display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center',
+          {/* Fila de Filtros Avanzados */}
+          <div className="filters-row" style={{
             background: 'var(--surface)', border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-lg)', padding: 10, marginBottom: 10,
+            borderRadius: 'var(--radius-lg)', padding: 10,
           }}>
-            <div style={{ position: 'relative', flex: '1 1 180px', minWidth: 140 }}>
+            <div style={{ position: 'relative', minWidth: 160, flex: 1 }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                    style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }}>
                 <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>
               </svg>
               <input
                 value={buscar} onChange={e => setBuscar(e.target.value)}
-                placeholder="Buscar expediente, actor..."
+                placeholder="Buscar por num, actor, demandado, abogado..."
                 style={{ ...inputStyle, paddingLeft: 30, width: '100%' }}
               />
             </div>
+            
             <select value={filtros.materia} onChange={e => setFiltros(f => ({ ...f, materia: e.target.value }))} style={{ ...inputStyle, width: 'auto' }}>
               <option value="">Todas las materias</option>
-              {MATERIAS.map(m => <option key={m}>{m}</option>)}
+              {MATERIAS.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
+
+            <select value={filtros.juzgado} onChange={e => setFiltros(f => ({ ...f, juzgado: e.target.value }))} style={{ ...inputStyle, width: 'auto' }}>
+              <option value="">Todos los juzgados</option>
+              {juzgadosExistentes.map(j => <option key={j} value={j}>{j}</option>)}
+            </select>
+
+            <select value={filtros.tipo} onChange={e => setFiltros(f => ({ ...f, tipo: e.target.value }))} style={{ ...inputStyle, width: 'auto' }}>
+              <option value="">Todos los juicios</option>
+              {tiposJuicioExistentes.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+
+            <select value={filtros.etapa} onChange={e => setFiltros(f => ({ ...f, etapa: e.target.value }))} style={{ ...inputStyle, width: 'auto' }}>
+              <option value="">Todas las etapas</option>
+              {ETAPAS.map(et => <option key={et} value={et}>{et}</option>)}
+            </select>
+
+            <select value={filtros.responsable} onChange={e => setFiltros(f => ({ ...f, responsable: e.target.value }))} style={{ ...inputStyle, width: 'auto' }}>
+              <option value="">Todos los responsables</option>
+              {responsablesExistentes.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+
             <select value={filtros.estado} onChange={e => setFiltros(f => ({ ...f, estado: e.target.value }))} style={{ ...inputStyle, width: 'auto' }}>
-              <option value="">Todos los estados</option>
-              {ESTADOS.map(m => <option key={m}>{m}</option>)}
+              <option value="">Todos los estatus</option>
+              <option value="Activo">Activos</option>
+              <option value="Concluido">Concluidos</option>
+              <option value="Suspendido">Suspendidos</option>
             </select>
+
+            {(filtros.materia || filtros.juzgado || filtros.tipo || filtros.etapa || filtros.responsable || filtros.estado) && (
+              <button
+                onClick={() => setFiltros({ materia: '', juzgado: '', tipo: '', etapa: '', responsable: '', estado: '' })}
+                style={{ ...btnSec, color: 'var(--danger)', borderColor: 'var(--danger)', fontSize: 11, padding: '8px 10px' }}
+              >
+                Limpiar
+              </button>
+            )}
           </div>
 
-          {/* Tabla */}
-          <div style={{ overflowX: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+          {/* Tabla de Expedientes */}
+          <div style={{ overflowX: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', marginTop: 10 }}>
             <table className="lx-table" style={{ border: 'none', borderRadius: 0 }}>
               <thead>
                 <tr>
-                  <th style={{ width: 28, padding: '10px 8px' }}></th>
+                  <th style={{ width: 24, padding: '10px 8px' }}></th>
                   <th>Expediente</th>
                   <th>Partes</th>
-                  {!detalleExp && <th>Juzgado / Materia</th>}
-                  {!detalleExp && <th>Etapa</th>}
-                  <th>Vencimiento</th>
-                  <th style={{ textAlign: 'center', width: 60 }}>CJJ</th>
-                  <th>Estado</th>
+                  {!detalleExp && <th>Juzgado / Partido</th>}
+                  {!detalleExp && <th>Tipo de juicio</th>}
+                  {!detalleExp && <th>Etapa actual</th>}
+                  {!detalleExp && <th>Último movimiento</th>}
+                  <th>Próxima fecha</th>
+                  {!detalleExp && <th>Responsable</th>}
+                  <th>Estatus</th>
                   <th style={{ width: 70 }}></th>
                 </tr>
               </thead>
               <tbody>
                 {loading && (
-                  <tr><td colSpan={detalleExp ? 7 : 9} style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>Cargando...</td></tr>
+                  <tr><td colSpan={detalleExp ? 6 : 11} style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>Cargando...</td></tr>
                 )}
                 {!loading && lista.length === 0 && (
-                  <tr><td colSpan={detalleExp ? 7 : 9} style={{ padding: 40 }}>
+                  <tr><td colSpan={detalleExp ? 6 : 11} style={{ padding: 40 }}>
                     <EmptyState
                       title="Sin expedientes"
                       subtitle={total === 0 ? 'Crea tu primer expediente para empezar.' : 'No hay resultados con esos filtros.'}
-                      action={total === 0 && <button onClick={abrirNuevo} style={btnPri}>+ Crear expediente</button>}
+                      action={total === 0 && <button onClick={abrirNuevo} style={btnPri}>+ Agregar expediente</button>}
                     />
                   </td></tr>
                 )}
                 {!loading && lista.map(e => {
-                  const d = diasHasta(e.termino)
+                  const d = diasHasta(e.proxima_fecha || e.termino)
                   const u = urgencyColor(d)
-                  const boletin = boletinIndicador(e)
+                  const bol = boletinIndicador(e)
                   const isSelected = detalleExp?.id === e.id
                   return (
                     <tr
@@ -1241,11 +1546,8 @@ export default function Expedientes({ session }) {
                         transition: 'background .15s',
                       }}
                     >
-                      <td style={{ textAlign: 'center', padding: '8px 6px' }}>
-                        <span style={{
-                          display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
-                          background: e.nuevo_acuerdo ? 'var(--danger)' : 'var(--border)',
-                        }} title={e.nuevo_acuerdo ? 'Nuevo acuerdo' : ''}/>
+                      <td style={{ textAlign: 'center', padding: '8px 6px', fontSize: 13 }} title={bol.tip}>
+                        {bol.icon}
                       </td>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1254,29 +1556,41 @@ export default function Expedientes({ session }) {
                             <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 999, background: 'var(--danger)', color: '#fff' }}>NUEVO</span>
                           )}
                         </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Año: {e.anio || '—'}</div>
                       </td>
                       <td>
                         <div style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500 }}>{e.actor}</div>
                         <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>vs. {e.demandado}</div>
                       </td>
                       {!detalleExp && <td>
-                        <div style={{ fontSize: 12, color: 'var(--text)', fontWeight: 500, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <div style={{ fontSize: 12, color: 'var(--text)', fontWeight: 500, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={e.juzgado}>
                           {e.juzgado ? e.juzgado.replace(/^Juzgado /i, '') : '—'}
                         </div>
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{e.materia}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{e.partido_judicial || '—'}</div>
                       </td>}
+                      {!detalleExp && <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{e.tipo || '—'}</td>}
                       {!detalleExp && <td><StatusBadge tone="primary" dot={false}>{e.etapa}</StatusBadge></td>}
-                      <td>
-                        {e.termino ? (
+                      
+                      {!detalleExp && <td style={{ fontSize: 12, color: 'var(--text-secondary)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {e.ultimo_acuerdo ? (
                           <div>
-                            <div style={{ fontSize: 12, color: 'var(--text)' }}>{fmtFecha(e.termino)}</div>
+                            <div style={{ fontWeight: 500 }} title={e.ultimo_acuerdo}>{e.ultimo_acuerdo}</div>
+                            {e.ultimo_movimiento && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{fmtFecha(e.ultimo_movimiento)}</div>}
+                          </div>
+                        ) : e.ultimo_movimiento ? (
+                          <div style={{ fontStyle: 'italic' }}>Acuerdo: {fmtFecha(e.ultimo_movimiento)}</div>
+                        ) : '—'}
+                      </td>}
+
+                      <td>
+                        {(e.proxima_fecha || e.termino) ? (
+                          <div>
+                            <div style={{ fontSize: 12, color: 'var(--text)', fontWeight: 600 }}>{fmtFecha(e.proxima_fecha || e.termino)}</div>
                             <div style={{ display: 'inline-block', marginTop: 2, background: u.bg, color: u.color, padding: '1px 7px', borderRadius: 999, fontSize: 10, fontWeight: 700 }}>{u.label}</div>
                           </div>
                         ) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                       </td>
-                      <td style={{ textAlign: 'center' }}>
-                        <span title={boletin.tip} style={{ fontSize: 15, cursor: 'default' }}>{boletin.icon}</span>
-                      </td>
+                      {!detalleExp && <td style={{ fontSize: 12, color: 'var(--text)' }}>{e.abogado_responsable || '—'}</td>}
                       <td><StatusBadge>{e.estado}</StatusBadge></td>
                       <td onClick={ev => ev.stopPropagation()}>
                         {canWrite && (
@@ -1306,7 +1620,7 @@ export default function Expedientes({ session }) {
         {/* ── Drawer lateral: detalle del expediente ── */}
         {detalleExp && (
           <div style={{
-            width: 480, minWidth: 320, flexShrink: 0,
+            width: 520, minWidth: 320, flexShrink: 0,
             background: 'var(--surface)',
             border: '1px solid var(--border)',
             borderRadius: 'var(--radius-lg)',
@@ -1342,15 +1656,27 @@ export default function Expedientes({ session }) {
                 </div>
               </div>
 
-              {/* Tabs */}
+              {/* Pestañas del Drawer scrollables */}
               <div style={{ display: 'flex', gap: 2, marginTop: 12, background: 'var(--surface-3)', borderRadius: 'var(--radius)', padding: 3, overflowX: 'auto' }}>
-                {[['info', '📋 Info'], ['historial', '📝 Historial'], ['archivos', '📎 Archivos'], ['boletin', '🔔 Boletín'], ['amparo', '⚖️ Amparo'], ['cobranza', '💰 Cobranza']].map(([k, lbl]) => (
+                {[
+                  ['info', '📋 Info'],
+                  ['partes', '👥 Partes'],
+                  ['historial', '📝 Actuaciones'],
+                  ['terminos', '⏳ Términos'],
+                  ['audiencias', '📅 Audiencias'],
+                  ['archivos', '📎 Docs'],
+                  ['boletin', '🔔 Boletín'],
+                  ['fuentes', '🔗 Fuentes Ext.'],
+                  ['observaciones', '👁️ Obs.'],
+                  ['amparo', '⚖️ Amparos'],
+                  ['cobranza', '💰 Cobranza']
+                ].map(([k, lbl]) => (
                   <button key={k} onClick={() => setTabDetalle(k)} style={{
-                    flex: 1, border: 'none', cursor: 'pointer',
+                    border: 'none', cursor: 'pointer', flexShrink: 0,
                     background: tabDetalle === k ? 'var(--surface)' : 'transparent',
                     color: tabDetalle === k ? 'var(--primary)' : 'var(--text-secondary)',
                     fontWeight: tabDetalle === k ? 700 : 500,
-                    padding: '6px 6px', borderRadius: 'calc(var(--radius) - 2px)',
+                    padding: '6px 10px', borderRadius: 'calc(var(--radius) - 2px)',
                     fontSize: 11, boxShadow: tabDetalle === k ? '0 1px 3px rgba(0,0,0,.1)' : 'none',
                     whiteSpace: 'nowrap',
                   }}>{lbl}</button>
@@ -1358,85 +1684,216 @@ export default function Expedientes({ session }) {
               </div>
             </div>
 
-            {/* Contenido scrolleable */}
+            {/* Contenido de la pestaña */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
 
-              {/* Tab Info */}
+              {/* 1. Tab Info */}
               {tabDetalle === 'info' && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
                   {[
+                    ['Número Expediente', detalleExp.num],
+                    ['Año', detalleExp.anio || '—'],
                     ['Materia', detalleExp.materia],
                     ['Tipo de juicio', detalleExp.tipo],
                     ['Juzgado', detalleExp.juzgado || '—'],
-                    ['Etapa', detalleExp.etapa],
-                    ['Estado', detalleExp.estado],
-                    ['Prioridad', detalleExp.prioridad || 'Normal'],
-                    ['Término', fmtFecha(detalleExp.termino)],
-                    ['Promoción', detalleExp.actuacion || '—'],
+                    ['Partido Judicial', detalleExp.partido_judicial || '—'],
+                    ['Parte Actora', detalleExp.actor],
+                    ['Parte Demandada', detalleExp.demandado],
+                    ['Abogado Responsable', detalleExp.abogado_responsable || '—'],
+                    ['Etapa procesal', detalleExp.etapa],
+                    ['Estado de trámite', detalleExp.estado],
+                    ['Fecha Inicio', fmtFecha(detalleExp.fecha_inicio)],
                     ['Código CJJ', detalleExp.cve_juz || getCjjCode(detalleExp.juzgado) || '—'],
-                    ['Último mov.', fmtFecha(detalleExp.ultimo_movimiento)],
+                    ['Último cotejo boletín', fmtFecha(detalleExp.ultimo_movimiento)],
+                    ['Próxima Fecha Importante', fmtFecha(detalleExp.proxima_fecha)],
+                    ['Término / Plazo Alerta', fmtFecha(detalleExp.termino)],
                   ].map(([k, v]) => (
                     <div key={k} style={{ background: 'var(--surface-3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '9px 12px' }}>
                       <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', fontWeight: 700, marginBottom: 3 }}>{k}</div>
                       <div style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500 }}>{v}</div>
                     </div>
                   ))}
-                  {detalleExp.notas && (
+                  {detalleExp.ultimo_acuerdo && (
                     <div style={{ gridColumn: '1 / -1', background: 'var(--surface-3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '9px 12px' }}>
-                      <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', fontWeight: 700, marginBottom: 3 }}>Notas</div>
-                      <div style={{ fontSize: 13, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{detalleExp.notas}</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', fontWeight: 700, marginBottom: 3 }}>Último Acuerdo Dictado</div>
+                      <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.5 }}>{detalleExp.ultimo_acuerdo}</div>
                     </div>
                   )}
                 </div>
               )}
 
-              {/* Tab Historial */}
-              {tabDetalle === 'historial' && (
+              {/* 2. Tab Partes Procesales (Nuevo) */}
+              {tabDetalle === 'partes' && (
                 <div>
                   {canWrite && (
-                    <div style={{ background: 'var(--surface-3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 10, marginBottom: 12 }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr auto', gap: 7, alignItems: 'end' }}>
-                        <div>
-                          <div style={labelStyle}>Fecha</div>
-                          <input type="date" style={inputStyle} value={hForm.fecha} onChange={e => setHForm(f => ({ ...f, fecha: e.target.value }))}/>
+                    <div className="sub-form">
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 8 }}>👥 Agregar parte del caso</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8 }}>
+                          <input style={inputStyle} value={pForm.nombre} onChange={e => setPForm({ ...pForm, nombre: e.target.value })} placeholder="Nombre completo o Razón Social *"/>
+                          <select style={inputStyle} value={pForm.rol} onChange={e => setPForm({ ...pForm, rol: e.target.value })}>
+                            <option value="Actor">Actor</option>
+                            <option value="Demandado">Demandado</option>
+                            <option value="Tercero">Tercero</option>
+                            <option value="Apoderado">Apoderado</option>
+                            <option value="Autorizado">Autorizado</option>
+                          </select>
                         </div>
-                        <div>
-                          <div style={labelStyle}>Descripción</div>
-                          <input style={inputStyle} value={hForm.descripcion} onChange={e => setHForm(f => ({ ...f, descripcion: e.target.value }))} placeholder="Se presentó escrito..."/>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                          <input style={inputStyle} value={pForm.telefono} onChange={e => setPForm({ ...pForm, telefono: e.target.value })} placeholder="Teléfono"/>
+                          <input style={inputStyle} type="email" value={pForm.correo} onChange={e => setPForm({ ...pForm, correo: e.target.value })} placeholder="Correo electrónico"/>
                         </div>
-                        <button onClick={guardarActuacion} disabled={hSaving} style={{ ...btnPri, padding: '9px 12px' }}>
-                          {hSaving ? '...' : 'Agregar'}
+                        <input style={inputStyle} value={pForm.domicilio} onChange={e => setPForm({ ...pForm, domicilio: e.target.value })} placeholder="Domicilio procesal o particular"/>
+                        <input style={inputStyle} value={pForm.observaciones} onChange={e => setPForm({ ...pForm, observaciones: e.target.value })} placeholder="Observaciones (ej. representante legal de...)"/>
+                        <button onClick={guardarParte} disabled={pSaving} style={{ ...btnPri, padding: '7px', justifyContent: 'center', fontSize: 12 }}>
+                          {pSaving ? 'Agregando...' : '+ Guardar parte'}
                         </button>
                       </div>
                     </div>
                   )}
+
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>Partes registradas ({partes.length})</div>
+                  {cargandoPartes ? (
+                    <DrawerSkeleton rows={2} />
+                  ) : partes.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)', fontSize: 12, fontStyle: 'italic' }}>Sin partes adicionales registradas.</div>
+                  ) : (
+                    partes.map(p => (
+                      <div key={p.id} style={{ background: 'var(--surface-3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 12px', marginBottom: 6 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <strong style={{ fontSize: 13, color: 'var(--text)' }}>{p.nombre}</strong>
+                          <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: p.rol === 'Actor' ? 'rgba(34,197,94,.12)' : p.rol === 'Demandado' ? 'rgba(239,68,68,.12)' : 'var(--surface-2)', color: p.rol === 'Actor' ? 'var(--success)' : p.rol === 'Demandado' ? 'var(--danger)' : 'var(--text-secondary)' }}>{p.rol}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                          {p.telefono && <span>📞 {p.telefono}  </span>}
+                          {p.correo && <span>✉️ {p.correo}</span>}
+                        </div>
+                        {p.domicilio && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>📍 {p.domicilio}</div>}
+                        {p.observaciones && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3, fontStyle: 'italic' }}>⚠️ {p.observaciones}</div>}
+                        
+                        {canWrite && (
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
+                            <button onClick={() => eliminarParte(p.id)} style={{ background: 'none', border: 'none', color: 'var(--danger)', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>Eliminar</button>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* 3. Tab Actuaciones */}
+              {tabDetalle === 'historial' && (
+                <div>
+                  {canWrite && (
+                    <div className="sub-form">
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 8 }}>📝 Registrar actuación manualmente</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 8 }}>
+                          <input type="date" style={inputStyle} value={hForm.fecha} onChange={e => setHForm({ ...hForm, fecha: e.target.value })}/>
+                          <select style={inputStyle} value={hForm.tipo_actuacion} onChange={e => setHForm({ ...hForm, tipo_actuacion: e.target.value })}>
+                            <option value="Acuerdo">Acuerdo del tribunal</option>
+                            <option value="Resolución">Resolución judicial</option>
+                            <option value="Notificación">Notificación</option>
+                            <option value="Diligencia">Diligencia / Actuario</option>
+                            <option value="Escrito">Presentación de escrito</option>
+                            <option value="Otro">Otro</option>
+                          </select>
+                        </div>
+                        
+                        <input style={inputStyle} value={hForm.descripcion} onChange={e => setHForm({ ...hForm, descripcion: e.target.value })} placeholder="Descripción (ej. se admiten pruebas de la actora) *" required/>
+                        
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '4px 0' }}>
+                          <input type="checkbox" id="gen_term" checked={hForm.genera_termino} onChange={e => setHForm({ ...hForm, genera_termino: e.target.checked })} style={{ cursor: 'pointer' }}/>
+                          <label htmlFor="gen_term" style={{ fontSize: 12, color: 'var(--text)', cursor: 'pointer', fontWeight: 600 }}>¿Genera término / plazo límite?</label>
+                        </div>
+
+                        {hForm.genera_termino && (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, background: 'var(--surface-2)', padding: 8, borderRadius: 4 }}>
+                            <div>
+                              <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)' }}>Fecha vencimiento</div>
+                              <input type="date" style={{ ...inputStyle, marginTop: 4 }} value={hForm.fecha_vencimiento} onChange={e => setHForm({ ...hForm, fecha_vencimiento: e.target.value })}/>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)' }}>Estatus de término</div>
+                              <select style={{ ...inputStyle, marginTop: 4 }} value={hForm.estatus_cumplimiento} onChange={e => setHForm({ ...hForm, estatus_cumplimiento: e.target.value })}>
+                                <option value="Pendiente">Pendiente</option>
+                                <option value="Completada">Completada</option>
+                              </select>
+                            </div>
+                          </div>
+                        )}
+
+                        <Field label="Responsable asignado">
+                          <select style={inputStyle} value={hForm.responsable} onChange={e => setHForm({ ...hForm, responsable: e.target.value })}>
+                            <option value="">— Sin asignar —</option>
+                            {abogados.map(m => (
+                              <option key={m.user_id} value={m.user_profiles?.nombre || m.user_id}>
+                                {m.user_profiles?.nombre || m.user_profiles?.email}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+
+                        <button onClick={guardarActuacion} disabled={hSaving} style={{ ...btnPri, padding: '8px', justifyContent: 'center', fontSize: 12 }}>
+                          {hSaving ? 'Guardando...' : '+ Guardar actuación'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {cargandoActuaciones ? (
                     <DrawerSkeleton rows={3} />
                   ) : historial.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>Sin actuaciones registradas.</div>
                   ) : (
                     historial.map(a => (
-                      <div key={a.id} style={{ display: 'flex', gap: 10, padding: '9px 0', borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 82 }}>{fmtFecha(a.fecha)}</span>
-                        <span style={{ flex: 1, fontSize: 13, color: 'var(--text)' }}>{a.descripcion}</span>
-                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                          {canWrite && (
-                            <button
-                              onClick={() => abrirReporteModal(a.fecha, a.descripcion)}
-                              style={{
-                                background: 'var(--surface-3)', border: '1px solid var(--border)',
-                                color: 'var(--text-secondary)', borderRadius: 'var(--radius-sm)',
-                                padding: '3px 7px', cursor: 'pointer', fontSize: 11, fontWeight: 600,
-                                display: 'inline-flex', alignItems: 'center', gap: 4
-                              }}
-                              title="Reportar al cliente por WhatsApp"
-                            >
-                              📱 Reportar
-                            </button>
-                          )}
-                          {canWrite && (
-                            <button onClick={() => eliminarActuacion(a.id)} style={{ ...iconActionBtn, color: 'var(--danger)', padding: '3px 7px' }} title="Eliminar">×</button>
-                          )}
+                      <div key={a.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 80, fontWeight: 600, marginTop: 2 }}>{fmtFecha(a.fecha)}</span>
+                          
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500 }}>{a.descripcion}</div>
+                            
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+                              <span style={{ fontSize: 9, background: 'var(--surface-3)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 5px', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: 700 }}>
+                                {a.tipo_actuacion || 'Actuación'}
+                              </span>
+                              
+                              {a.genera_termino && (
+                                <button
+                                  onClick={() => toggleCumplimientoActuacion(a)}
+                                  style={{
+                                    border: 'none', borderRadius: 4, padding: '1px 7px', fontSize: 10, fontWeight: 700, cursor: 'pointer',
+                                    background: a.estatus_cumplimiento === 'Completada' ? 'rgba(34,197,94,.12)' : 'rgba(239,68,68,.12)',
+                                    color: a.estatus_cumplimiento === 'Completada' ? 'var(--success)' : 'var(--danger)',
+                                  }}
+                                  title="Haz clic para cambiar estatus"
+                                >
+                                  ⏳ Término: {fmtFecha(a.fecha_vencimiento)} ({a.estatus_cumplimiento === 'Completada' ? 'COMPLETO ✓' : 'PENDIENTE ⚡'})
+                                </button>
+                              )}
+                              
+                              {a.responsable && (
+                                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>👤 Resp: {a.responsable}</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                            {canWrite && (
+                              <button
+                                onClick={() => abrirReporteModal(a.fecha, a.descripcion)}
+                                style={{ background: 'var(--surface-3)', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: 'var(--radius-sm)', padding: '4px 6px', cursor: 'pointer', fontSize: 11 }}
+                                title="Reportar al cliente por WhatsApp"
+                              >
+                                📱
+                              </button>
+                            )}
+                            {canWrite && (
+                              <button onClick={() => eliminarActuacion(a.id)} style={{ ...iconActionBtn, color: 'var(--danger)', padding: '4px 6px' }}>×</button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))
@@ -1444,7 +1901,111 @@ export default function Expedientes({ session }) {
                 </div>
               )}
 
-              {/* Tab Archivos */}
+              {/* 4. Tab Términos / Vencimientos (Nuevo) */}
+              {tabDetalle === 'terminos' && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 10 }}>Plazos procesales pendientes</div>
+                  {historial.filter(a => a.genera_termino).length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)', fontSize: 12, fontStyle: 'italic' }}>No hay plazos o términos configurados para este expediente.</div>
+                  ) : (
+                    historial.filter(a => a.genera_termino).map(a => {
+                      const d = diasHasta(a.fecha_vencimiento)
+                      const u = urgencyColor(d)
+                      return (
+                        <div key={a.id} style={{
+                          background: 'var(--surface-3)', border: '1px solid var(--border)',
+                          borderRadius: 'var(--radius)', padding: '12px 14px', marginBottom: 8,
+                          borderLeft: `4px solid ${a.estatus_cumplimiento === 'Completada' ? 'var(--success)' : u.color}`
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <strong style={{ fontSize: 13, color: 'var(--text)' }}>{a.descripcion}</strong>
+                            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: a.estatus_cumplimiento === 'Completada' ? 'rgba(34,197,94,.12)' : u.bg, color: a.estatus_cumplimiento === 'Completada' ? 'var(--success)' : u.color }}>
+                              {a.estatus_cumplimiento === 'Completada' ? 'Completado' : u.label}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, display: 'flex', justifyContent: 'space-between' }}>
+                            <span>📅 Límite: {fmtFecha(a.fecha_vencimiento)}</span>
+                            {a.responsable && <span>👤 Responsable: {a.responsable}</span>}
+                          </div>
+                          {canWrite && a.estatus_cumplimiento !== 'Completada' && (
+                            <button
+                              onClick={() => toggleCumplimientoActuacion(a)}
+                              style={{ ...btnPri, padding: '4px 10px', fontSize: 11, marginTop: 8, background: 'var(--success)', color: '#fff', width: '100%', justifyContent: 'center' }}
+                            >
+                              ✓ Marcar como cumplido
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              )}
+
+              {/* 5. Tab Audiencias (Nuevo) */}
+              {tabDetalle === 'audiencias' && (
+                <div>
+                  {canWrite && (
+                    <div className="sub-form">
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 8 }}>📅 Programar nueva audiencia</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <input style={inputStyle} value={audForm.titulo} onChange={e => setAudForm({ ...audForm, titulo: e.target.value })} placeholder="Título (ej. Audiencia Constitucional, Incidental, etc.) *" required/>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
+                          <div>
+                            <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 3 }}>Fecha y Hora *</div>
+                            <input type="datetime-local" style={inputStyle} value={audForm.fecha_hora} onChange={e => setAudForm({ ...audForm, fecha_hora: e.target.value })} required/>
+                          </div>
+                        </div>
+                        <input style={inputStyle} value={audForm.lugar} onChange={e => setAudForm({ ...audForm, lugar: e.target.value })} placeholder="Lugar (ej. Sala 3 del Juzgado Mercantil)"/>
+                        <textarea style={{ ...inputStyle, minHeight: 40, resize: 'vertical' }} value={audForm.observaciones} onChange={e => setAudForm({ ...audForm, observaciones: e.target.value })} placeholder="Observaciones preliminares..."/>
+                        
+                        <button onClick={guardarAudiencia} disabled={audSaving} style={{ ...btnPri, padding: '8px', justifyContent: 'center', fontSize: 12 }}>
+                          {audSaving ? 'Guardando...' : '+ Guardar audiencia'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>Audiencias programadas ({audiencias.length})</div>
+                  {cargandoAudiencias ? (
+                    <DrawerSkeleton rows={2} />
+                  ) : audiencias.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)', fontSize: 12, fontStyle: 'italic' }}>Sin audiencias próximas o registradas.</div>
+                  ) : (
+                    audiencias.map(a => {
+                      const fecLimpia = new Date(a.fecha_hora)
+                      const pas = fecLimpia < new Date()
+                      return (
+                        <div key={a.id} style={{
+                          background: 'var(--surface-3)', border: '1px solid var(--border)',
+                          borderRadius: 'var(--radius)', padding: '10px 12px', marginBottom: 6,
+                          borderLeft: `4px solid ${pas ? 'var(--text-muted)' : 'var(--primary)'}`
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <strong style={{ fontSize: 13, color: 'var(--text)' }}>{a.titulo}</strong>
+                            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: pas ? 'var(--surface-2)' : 'rgba(37,99,235,.12)', color: pas ? 'var(--text-muted)' : 'var(--primary)' }}>
+                              {pas ? 'Pasada' : 'Próxima'}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, fontWeight: 600 }}>
+                            📅 {fecLimpia.toLocaleDateString('es-MX')} a las {fecLimpia.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })} hrs
+                          </div>
+                          {a.lugar && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>📍 Lugar: {a.lugar}</div>}
+                          {a.observaciones && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3, fontStyle: 'italic' }}>📝 {a.observaciones}</div>}
+                          
+                          {canWrite && (
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
+                              <button onClick={() => eliminarAudiencia(a.id)} style={{ background: 'none', border: 'none', color: 'var(--danger)', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>Eliminar</button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              )}
+
+              {/* 6. Tab Archivos */}
               {tabDetalle === 'archivos' && (
                 <div>
                   {canWrite && (
@@ -1479,10 +2040,9 @@ export default function Expedientes({ session }) {
                 </div>
               )}
 
-              {/* Tab Boletín CJJ */}
+              {/* 7. Tab Boletín CJJ */}
               {tabDetalle === 'boletin' && (
                 <div>
-                  {/* Info CJJ + toggle alertas */}
                   <div style={{
                     background: 'var(--surface-3)', border: '1px solid var(--border)',
                     borderRadius: 'var(--radius)', padding: '11px 14px', marginBottom: 12,
@@ -1523,7 +2083,6 @@ export default function Expedientes({ session }) {
                     )}
                   </div>
 
-                  {/* Botón consultar */}
                   <div style={{ marginBottom: 14 }}>
                     {canWrite && (
                       <button
@@ -1549,7 +2108,6 @@ export default function Expedientes({ session }) {
                     )}
                   </div>
 
-                  {/* Lista de acuerdos */}
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>
                     Acuerdos guardados ({acuerdos.length})
                   </div>
@@ -1619,10 +2177,120 @@ export default function Expedientes({ session }) {
                 </div>
               )}
 
-              {/* ── Tab Amparo Federal CJF ── */}
+              {/* 8. Tab Fuentes Externas / Enlaces Oficiales (Nuevo) */}
+              {tabDetalle === 'fuentes' && (
+                <div>
+                  {canWrite && (
+                    <div className="sub-form">
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 8 }}>🔗 Registrar Consulta Judicial Externa</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                          <select style={inputStyle} value={fExtForm.nombre} onChange={e => setFExtForm({ ...fExtForm, nombre: e.target.value })}>
+                            <option value="Boletín Judicial Jalisco">Boletín Judicial Jalisco</option>
+                            <option value="Consulta de Expedientes del Poder Judicial de Jalisco">Poder Judicial de Jalisco</option>
+                            <option value="CJF / Amparos Tercer Circuito">CJF / Amparos Tercer Circuito</option>
+                            <option value="Lista de acuerdos CJF">Lista de acuerdos CJF</option>
+                            <option value="Expediente CJF">Expediente CJF</option>
+                            <option value="Otro enlace oficial">Otro portal oficial</option>
+                          </select>
+                          <select style={inputStyle} value={fExtForm.tipo} onChange={e => setFExtForm({ ...fExtForm, tipo: e.target.value })}>
+                            <option value="Boletín">Boletín Oficial</option>
+                            <option value="Poder Judicial">Poder Judicial</option>
+                            <option value="CJF">CJF / Amparo</option>
+                            <option value="Otro">Otro</option>
+                          </select>
+                        </div>
+                        
+                        <input style={inputStyle} value={fExtForm.url} onChange={e => setFExtForm({ ...fExtForm, url: e.target.value })} placeholder="URL oficial (ej: https://cjj.gob.mx/...) *" required/>
+                        
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                          <input style={inputStyle} value={fExtForm.num_externo} onChange={e => setFExtForm({ ...fExtForm, num_externo: e.target.value })} placeholder="Expediente externo / amparo"/>
+                          <input style={inputStyle} value={fExtForm.organo} onChange={e => setFExtForm({ ...fExtForm, organo: e.target.value })} placeholder="Órgano jurisdiccional"/>
+                        </div>
+                        
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                          <div>
+                            <div style={{ fontSize: 9, fontWeight: 600, color: 'var(--text-muted)' }}>Última consulta</div>
+                            <input type="date" style={inputStyle} value={fExtForm.ultima_consulta} onChange={e => setFExtForm({ ...fExtForm, ultima_consulta: e.target.value })}/>
+                          </div>
+                          <input style={{ ...inputStyle, marginTop: 14 }} value={fExtForm.observaciones} onChange={e => setFExtForm({ ...fExtForm, observaciones: e.target.value })} placeholder="Claves de acceso, notas..."/>
+                        </div>
+
+                        <button onClick={guardarFuente} disabled={fExtSaving} style={{ ...btnPri, padding: '8px', justifyContent: 'center', fontSize: 12 }}>
+                          {fExtSaving ? 'Guardando...' : '+ Registrar portal'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>Enlaces oficiales registrados ({fuentes.length})</div>
+                  {cargandoFuentes ? (
+                    <DrawerSkeleton rows={2} />
+                  ) : fuentes.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)', fontSize: 12, fontStyle: 'italic' }}>Sin fuentes o portales externos registrados.</div>
+                  ) : (
+                    fuentes.map(f => (
+                      <div key={f.id} style={{ background: 'var(--surface-3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 12px', marginBottom: 6 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <div>
+                            <strong style={{ fontSize: 13, color: 'var(--text)' }}>{f.nombre}</strong>
+                            <div style={{ fontSize: 10, color: 'var(--primary)', fontWeight: 600, marginTop: 2 }}>{f.tipo}</div>
+                          </div>
+                          <a
+                            href={f.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              background: 'var(--primary)', color: '#fff', textDecoration: 'none',
+                              borderRadius: 'var(--radius)', padding: '5px 12px', fontSize: 11, fontWeight: 700,
+                              display: 'inline-block'
+                            }}
+                          >
+                            Abrir fuente oficial ↗
+                          </a>
+                        </div>
+                        
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                          {f.num_externo && <span>📁 Ext: {f.num_externo}</span>}
+                          {f.organo && <span>🏛️ Juzgado: {f.organo}</span>}
+                          <span>📅 Consulta: {fmtFecha(f.ultima_consulta)}</span>
+                        </div>
+                        {f.observaciones && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, fontStyle: 'italic' }}>📝 {f.observaciones}</div>}
+                        
+                        {canWrite && (
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6, borderTop: '1px solid var(--border)', paddingTop: 6 }}>
+                            <button onClick={() => eliminarFuente(f.id)} style={{ background: 'none', border: 'none', color: 'var(--danger)', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}>Eliminar</button>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* 9. Tab Observaciones (Nuevo) */}
+              {tabDetalle === 'observaciones' && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>Observaciones internas del expediente</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <textarea
+                      style={{ ...inputStyle, minHeight: 280, resize: 'vertical', fontSize: 13, lineHeight: 1.5 }}
+                      value={obsText}
+                      onChange={e => setObsText(e.target.value)}
+                      placeholder="Escribe comentarios generales, estrategias del litigio, convenios y acuerdos con el cliente..."
+                    />
+                    {canWrite && (
+                      <button onClick={guardarObservaciones} disabled={obsSaving} style={btnPri}>
+                        {obsSaving ? 'Guardando...' : '💾 Guardar observaciones'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 10. Tab Amparo Federal CJF */}
               {tabDetalle === 'amparo' && (
                 <div>
-                  {/* Encabezado informativo */}
                   <div style={{
                     background: 'var(--surface-3)', border: '1px solid var(--border)',
                     borderRadius: 'var(--radius)', padding: '11px 14px', marginBottom: 14,
@@ -1633,17 +2301,26 @@ export default function Expedientes({ session }) {
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
                       Registra amparos del Tercer Circuito vinculados a este expediente.
                     </div>
-                    <a
-                      href={CJF_CIRCUITO_3_URL}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ fontSize: 11, color: 'var(--primary)', fontWeight: 600, marginTop: 6, display: 'inline-block' }}
-                    >
-                      🔗 Portal DGEJ-CJF Tercer Circuito ↗
-                    </a>
+                    <div style={{ display: 'flex', gap: 16, marginTop: 6, flexWrap: 'wrap' }}>
+                      <a
+                        href={CJF_CIRCUITO_3_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ fontSize: 11, color: 'var(--primary)', fontWeight: 600, display: 'inline-block' }}
+                      >
+                        🔗 Portal DGEJ-CJF Tercer Circuito ↗
+                      </a>
+                      <a
+                        href="https://www.oaj.gob.mx/micrositios/dggj/paginas/serviciosTramites.htm?pageName=servicios%2FsesionExpediente.htm"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ fontSize: 11, color: 'var(--primary)', fontWeight: 600, display: 'inline-block' }}
+                      >
+                        📅 Consultar Sesión en DGGJ-OAJ ↗
+                      </a>
+                    </div>
                   </div>
 
-                  {/* Búsqueda automática por número */}
                   {canWrite && (
                     <BuscarAmparoCJF
                       onBuscar={(numAmparo) => consultarCJFAhora(detalleExp, numAmparo)}
@@ -1651,14 +2328,12 @@ export default function Expedientes({ session }) {
                     />
                   )}
 
-                  {/* Error consulta CJF */}
                   {errorAmparos && (
                     <div style={{ padding: '8px 12px', background: 'var(--danger-bg)', color: 'var(--danger-text)', borderRadius: 'var(--radius)', fontSize: 12, marginBottom: 10 }}>
                       ⚠️ {errorAmparos}
                     </div>
                   )}
 
-                  {/* ── Formulario inline ── */}
                   {canWrite && (
                     <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden', marginBottom: 16 }}>
                       <div style={{ background: 'var(--surface-3)', padding: '9px 14px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 700, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '.4px' }}>
@@ -1666,7 +2341,6 @@ export default function Expedientes({ session }) {
                       </div>
                       <div style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-                        {/* Sección 1: Identificación */}
                         <SeccionAmparo titulo="Identificación del amparo">
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                             <Field label="Número de amparo *">
@@ -1723,7 +2397,6 @@ export default function Expedientes({ session }) {
                           </div>
                         </SeccionAmparo>
 
-                        {/* Sección 2: Órgano jurisdiccional */}
                         <SeccionAmparo titulo="Órgano jurisdiccional — Tercer Circuito (Jalisco)">
                           <Field label="Tribunal / Juzgado *">
                             <select style={inputStyle} value={ampForm.organo}
@@ -1747,7 +2420,6 @@ export default function Expedientes({ session }) {
                           </div>
                         </SeccionAmparo>
 
-                        {/* Sección 3: Partes */}
                         <SeccionAmparo titulo="Partes">
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                             <Field label="Quejoso (parte promovente)">
@@ -1773,7 +2445,6 @@ export default function Expedientes({ session }) {
                           </div>
                         </SeccionAmparo>
 
-                        {/* Sección 4: Acto reclamado y fechas */}
                         <SeccionAmparo titulo="Acto reclamado y fechas">
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                             <Field label="Acto reclamado">
@@ -1795,7 +2466,6 @@ export default function Expedientes({ session }) {
                           </div>
                         </SeccionAmparo>
 
-                        {/* Sección 5: Último acuerdo */}
                         <SeccionAmparo titulo="Último acuerdo / actuación">
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                             <Field label="Descripción del acuerdo">
@@ -1813,7 +2483,6 @@ export default function Expedientes({ session }) {
                           </div>
                         </SeccionAmparo>
 
-                        {/* Enlace fuente + botón guardar */}
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
                           <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                             📌{' '}
@@ -1831,7 +2500,6 @@ export default function Expedientes({ session }) {
                     </div>
                   )}
 
-                  {/* Lista de amparos */}
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>
                     Amparos vinculados ({cargandoAmparos ? '…' : amparos.length})
                   </div>
@@ -1891,12 +2559,21 @@ export default function Expedientes({ session }) {
                                   {a.descripcion_acuerdo}
                                 </div>
                               )}
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                                 {a.estado_asunto && (
                                   <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Estado: {a.estado_asunto}</span>
                                 )}
-                                <a href={a.url_fuente} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: 'var(--primary)' }}>
+                                <a href={a.url_fuente} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: 'var(--primary)', fontWeight: 600 }}>
                                   Ver en CJF ↗
+                                </a>
+                                <a
+                                  href="https://www.oaj.gob.mx/micrositios/dggj/paginas/serviciosTramites.htm?pageName=servicios%2FsesionExpediente.htm"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ fontSize: 10, color: 'var(--primary)', fontWeight: 600 }}
+                                  title="Consultar programación de sesión para resolver este amparo en DGGJ-OAJ"
+                                >
+                                  📅 Consultar Sesión DGGJ-OAJ ↗
                                 </a>
                               </div>
                             </div>
@@ -1915,7 +2592,6 @@ export default function Expedientes({ session }) {
                             </div>
                           </div>
 
-                          {/* ── Historial de acuerdos ── */}
                           {amparoExpandido === a.id && (
                             <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
                               <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 8 }}>
@@ -1926,7 +2602,6 @@ export default function Expedientes({ session }) {
                               ) : (acuerdosAmparo[a.id] || []).length === 0 ? (
                                 <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '10px 0', textAlign: 'center' }}>
                                   Sin acuerdos en historial todavía.
-                                  <div style={{ fontSize: 11, marginTop: 4 }}>El sync automático corre cada noche de lunes a viernes.</div>
                                 </div>
                               ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1969,14 +2644,12 @@ export default function Expedientes({ session }) {
                 </div>
               )}
 
-              {/* Tab Cobranza */}
+              {/* 11. Tab Cobranza */}
               {tabDetalle === 'cobranza' && (
                 <div>
-                  {/* Resumen Financiero */}
                   <div style={{
                     display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16
                   }}>
-                    {/* Pendiente */}
                     <div style={{
                       background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.2)',
                       borderRadius: 'var(--radius)', padding: '12px 14px', textAlign: 'center'
@@ -1987,7 +2660,6 @@ export default function Expedientes({ session }) {
                            gastos.filter(g => !g.facturado).reduce((sum, g) => sum + g.monto, 0)).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
                       </div>
                     </div>
-                    {/* Facturado */}
                     <div style={{
                       background: 'rgba(34,197,94,.08)', border: '1px solid rgba(34,197,94,.2)',
                       borderRadius: 'var(--radius)', padding: '12px 14px', textAlign: 'center'
@@ -2000,7 +2672,6 @@ export default function Expedientes({ session }) {
                     </div>
                   </div>
 
-                  {/* Acciones principales */}
                   <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
                     <button
                       onClick={() => setModalFactura(true)}
@@ -2019,33 +2690,31 @@ export default function Expedientes({ session }) {
                     </button>
                   </div>
 
-                  {/* Horas Facturables */}
                   <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden', marginBottom: 16 }}>
                     <div style={{ background: 'var(--surface-3)', padding: '8px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 700, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '.4px' }}>
                       ⏱️ Registro de Horas
                     </div>
                     
-                    {/* Formulario agregar horas */}
                     {canWrite && (
                       <div style={{ padding: 10, background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }}>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                           <div>
                             <div style={smallLabel}>Fecha</div>
-                            <input type="date" style={inputStyle} value={horasForm.fecha} onChange={e => setHorasForm(f => ({ ...f, fecha: e.target.value }))}/>
+                            <input type="date" style={inputStyle} value={horasForm.fecha} onChange={e => setHorasForm({ ...horasForm, fecha: e.target.value })}/>
                           </div>
                           <div>
                             <div style={smallLabel}>Horas</div>
-                            <input type="number" step="0.1" style={inputStyle} placeholder="1.5" value={horasForm.horas} onChange={e => setHorasForm(f => ({ ...f, horas: e.target.value }))}/>
+                            <input type="number" step="0.1" style={inputStyle} placeholder="1.5" value={horasForm.horas} onChange={e => setHorasForm({ ...horasForm, horas: e.target.value })}/>
                           </div>
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px', gap: 8, alignItems: 'end' }}>
                           <div>
                             <div style={smallLabel}>Descripción de Actividad</div>
-                            <input style={inputStyle} placeholder="Estudio de amparo..." value={horasForm.descripcion} onChange={e => setHorasForm(f => ({ ...f, descripcion: e.target.value }))}/>
+                            <input style={inputStyle} placeholder="Estudio de amparo..." value={horasForm.descripcion} onChange={e => setHorasForm({ ...horasForm, descripcion: e.target.value })}/>
                           </div>
                           <div>
                             <div style={smallLabel}>Tarifa/Hora</div>
-                            <input type="number" style={inputStyle} value={horasForm.tarifa_hora} onChange={e => setHorasForm(f => ({ ...f, tarifa_hora: e.target.value }))}/>
+                            <input type="number" style={inputStyle} value={horasForm.tarifa_hora} onChange={e => setHorasForm({ ...horasForm, tarifa_hora: e.target.value })}/>
                           </div>
                         </div>
                         <button onClick={guardarHora} disabled={cobranzaSaving} style={{ ...btnPri, width: '100%', marginTop: 10, padding: '7px', justifyContent: 'center', fontSize: 12 }}>
@@ -2054,7 +2723,6 @@ export default function Expedientes({ session }) {
                       </div>
                     )}
 
-                    {/* Lista horas */}
                     <div style={{ padding: '4px 10px', maxHeight: 200, overflowY: 'auto' }}>
                       {cargandoCobranza ? (
                         <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: 12, textAlign: 'center' }}>Cargando...</div>
@@ -2087,28 +2755,26 @@ export default function Expedientes({ session }) {
                     </div>
                   </div>
 
-                  {/* Registro de Gastos */}
                   <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
                     <div style={{ background: 'var(--surface-3)', padding: '8px 12px', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 700, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '.4px' }}>
                       💸 Registro de Gastos
                     </div>
                     
-                    {/* Formulario agregar gastos */}
                     {canWrite && (
                       <div style={{ padding: 10, background: 'var(--surface-2)', borderBottom: '1px solid var(--border)' }}>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                           <div>
                             <div style={smallLabel}>Fecha</div>
-                            <input type="date" style={inputStyle} value={gastosForm.fecha} onChange={e => setGastosForm(f => ({ ...f, fecha: e.target.value }))}/>
+                            <input type="date" style={inputStyle} value={gastosForm.fecha} onChange={e => setGastosForm({ ...gastosForm, fecha: e.target.value })}/>
                           </div>
                           <div>
                             <div style={smallLabel}>Monto (MXN)</div>
-                            <input type="number" style={inputStyle} placeholder="500" value={gastosForm.monto} onChange={e => setGastosForm(f => ({ ...f, monto: e.target.value }))}/>
+                            <input type="number" style={inputStyle} placeholder="500" value={gastosForm.monto} onChange={e => setGastosForm({ ...gastosForm, monto: e.target.value })}/>
                           </div>
                         </div>
                         <div>
                           <div style={smallLabel}>Concepto</div>
-                          <input style={inputStyle} placeholder="Copias certificadas..." value={gastosForm.concepto} onChange={e => setGastosForm(f => ({ ...f, concepto: e.target.value }))}/>
+                          <input style={inputStyle} placeholder="Copias certificadas..." value={gastosForm.concepto} onChange={e => setGastosForm({ ...gastosForm, concepto: e.target.value })}/>
                         </div>
                         <button onClick={guardarGasto} disabled={cobranzaSaving} style={{ ...btnPri, width: '100%', marginTop: 10, padding: '7px', justifyContent: 'center', fontSize: 12 }}>
                           {cobranzaSaving ? 'Guardando...' : '+ Registrar Gasto'}
@@ -2116,7 +2782,6 @@ export default function Expedientes({ session }) {
                       </div>
                     )}
 
-                    {/* Lista gastos */}
                     <div style={{ padding: '4px 10px', maxHeight: 200, overflowY: 'auto' }}>
                       {cargandoCobranza ? (
                         <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: 12, textAlign: 'center' }}>Cargando...</div>
@@ -2165,39 +2830,34 @@ export default function Expedientes({ session }) {
 
       </div>
 
-      {/* Modal de creación/edición */}
+      {/* Modal de creación/edición de expediente */}
       <Modal
         open={modal}
         onClose={() => setModal(false)}
-        title={editId ? 'Editar expediente' : 'Nuevo expediente'}
-        subtitle="Captura los datos jurídicos del caso"
-        width={760}
+        title={editId ? 'Editar expediente' : 'Agregar expediente'}
+        subtitle="Captura detalladamente los datos de control del expediente"
+        width={800}
         footer={
           <>
             <button onClick={() => setModal(false)} style={btnSec}>Cancelar</button>
             <button onClick={guardar} disabled={saving} style={btnPri}>
-              {saving ? 'Guardando...' : 'Guardar expediente'}
+              {saving ? 'Guardando...' : '💾 Guardar expediente'}
             </button>
           </>
         }
       >
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
           <Field label="Número de expediente *">
-            <input style={inputStyle} value={form.num} onChange={e => setF('num', e.target.value)} placeholder="1234/2024"/>
+            <input style={inputStyle} value={form.num} onChange={e => setF('num', e.target.value)} placeholder="Ej: 1234/2026"/>
           </Field>
-          <Field label="Materia *">
-            <select style={inputStyle} value={form.materia} onChange={e => setF('materia', e.target.value)}>
-              {MATERIAS.map(o => <option key={o}>{o}</option>)}
-            </select>
+          
+          <Field label="Año de inicio *">
+            <input style={inputStyle} type="number" value={form.anio} onChange={e => setF('anio', e.target.value)} placeholder="2026"/>
           </Field>
-          <Field label="Tipo de juicio *" full>
-            <select style={inputStyle} value={form.tipo} onChange={e => setF('tipo', e.target.value)}>
-              {TIPOS.map(o => <option key={o}>{o}</option>)}
-            </select>
-          </Field>
-          <Field label="Juzgado / Órgano" full>
+
+          <Field label="Juzgado / Órgano Jurisdiccional *">
             <select style={inputStyle} value={form.juzgado} onChange={e => handleJuzgadoChange(e.target.value)}>
-              <option value="">— Seleccionar juzgado —</option>
+              <option value="">— Seleccionar juzgado del CJJ —</option>
               {JUZGADOS_JALISCO.map(g => (
                 <optgroup key={g.grupo} label={g.grupo}>
                   {g.items.map(j => <option key={j} value={j}>{j}</option>)}
@@ -2210,19 +2870,55 @@ export default function Expedientes({ session }) {
             )}
             {form.cve_juz && (
               <div style={{ fontSize: 11, color: 'var(--primary)', marginTop: 5, fontWeight: 600 }}>
-                🔑 Código CJJ: {form.cve_juz} — se consultará el boletín al guardar
+                🔑 Código de Boletín CJJ Jalisco: {form.cve_juz}
               </div>
             )}
           </Field>
-          <Field label="Actor *" full>
-            <input style={inputStyle} value={form.actor} onChange={e => setF('actor', e.target.value)}/>
+
+          <Field label="Partido Judicial">
+            <input style={inputStyle} value={form.partido_judicial} onChange={e => setF('partido_judicial', e.target.value)} placeholder="Ej: Primer Partido Judicial - Guadalajara"/>
           </Field>
-          <Field label="Demandado *" full>
-            <input style={inputStyle} value={form.demandado} onChange={e => setF('demandado', e.target.value)}/>
+
+          <Field label="Materia *">
+            <select style={inputStyle} value={form.materia} onChange={e => setF('materia', e.target.value)}>
+              <option value="Mercantil">Mercantil</option>
+              <option value="Civil">Civil</option>
+              <option value="Familiar">Familiar</option>
+              <option value="Laboral">Laboral</option>
+              <option value="Administrativa">Administrativa</option>
+              <option value="Penal">Penal</option>
+              <option value="Otra">Otra materia</option>
+            </select>
           </Field>
-          <Field label="Cliente asignado (opcional)" full>
+
+          <Field label="Tipo de juicio *">
+            <select style={inputStyle} value={form.tipo} onChange={e => setF('tipo', e.target.value)}>
+              {TIPOS.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </Field>
+
+          <Field label="Parte Actora *">
+            <input style={inputStyle} value={form.actor} onChange={e => setF('actor', e.target.value)} placeholder="Persona promotora o demandante"/>
+          </Field>
+
+          <Field label="Parte Demandada *">
+            <input style={inputStyle} value={form.demandado} onChange={e => setF('demandado', e.target.value)} placeholder="Contraparte o demandado"/>
+          </Field>
+
+          <Field label="Abogado Responsable">
+            <select style={inputStyle} value={form.abogado_responsable} onChange={e => setF('abogado_responsable', e.target.value)}>
+              <option value="">— Seleccionar Responsable —</option>
+              {abogados.map(m => (
+                <option key={m.user_id} value={m.user_profiles?.nombre || m.user_id}>
+                  {m.user_profiles?.nombre || m.user_profiles?.email}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <Field label="Cliente asignado (Portal de clientes)">
             <select style={inputStyle} value={form.cliente_id || ''} onChange={e => setF('cliente_id', e.target.value)}>
-              <option value="">— Ninguno / Sin cliente asignado —</option>
+              <option value="">— Sin vinculación a portal de clientes —</option>
               {clientes.map(c => (
                 <option key={c.id} value={c.id}>
                   {c.nombre ? `${c.nombre} (${c.email})` : c.email}
@@ -2230,39 +2926,49 @@ export default function Expedientes({ session }) {
               ))}
             </select>
           </Field>
-          <Field label="Etapa procesal *">
+
+          <Field label="Etapa procesal actual *">
             <select style={inputStyle} value={form.etapa} onChange={e => setF('etapa', e.target.value)}>
-              {ETAPAS.map(o => <option key={o}>{o}</option>)}
+              {ETAPAS.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
-          </Field>
-          <Field label="Estado">
-            <select style={inputStyle} value={form.estado} onChange={e => setF('estado', e.target.value)}>
-              {ESTADOS.map(o => <option key={o}>{o}</option>)}
-            </select>
-          </Field>
-          <Field label="Tipo de promoción pendiente" full>
-            <select style={inputStyle} value={form.tipoPromo} onChange={e => setF('tipoPromo', e.target.value)}>
-              <option value="">— Sin promoción pendiente —</option>
-              {TIPOS_PROMO.map(o => <option key={o}>{o}</option>)}
-            </select>
-          </Field>
-          <Field label="Detalle de la promoción" full>
-            <input style={inputStyle} value={form.promoDesc} onChange={e => setF('promoDesc', e.target.value)} placeholder="Presentar escrito antes del 25..."/>
-          </Field>
-          <Field label="Fecha de término">
-            <input type="date" style={inputStyle} value={form.termino} onChange={e => setF('termino', e.target.value)}/>
-          </Field>
-          <Field label="Prioridad">
-            <select style={inputStyle} value={form.prioridad} onChange={e => setF('prioridad', e.target.value)}>
-              {PRIORIDADES.map(o => <option key={o}>{o}</option>)}
-            </select>
-          </Field>
-          <Field label="Notas" full>
-            <textarea style={{ ...inputStyle, minHeight: 80, resize: 'vertical' }} value={form.notas} onChange={e => setF('notas', e.target.value)}/>
           </Field>
 
-          {/* Toggle Alertas */}
-          <div style={{ gridColumn: '1 / -1' }}>
+          <Field label="Estado procesal">
+            <select style={inputStyle} value={form.estado} onChange={e => setF('estado', e.target.value)}>
+              <option value="Activo">Activo</option>
+              <option value="Suspendido">Suspendido</option>
+              <option value="Concluido">Concluido</option>
+            </select>
+          </Field>
+
+          <Field label="Fecha de inicio (Radicación)">
+            <input type="date" style={inputStyle} value={form.fecha_inicio} onChange={e => setF('fecha_inicio', e.target.value)}/>
+          </Field>
+
+          <Field label="Próxima fecha importante / Audiencia">
+            <input type="date" style={inputStyle} value={form.proxima_fecha} onChange={e => setF('proxima_fecha', e.target.value)}/>
+          </Field>
+
+          <Field label="Último acuerdo dictado (Resumen)">
+            <input style={inputStyle} value={form.ultimo_acuerdo} onChange={e => setF('ultimo_acuerdo', e.target.value)} placeholder="Auto del día..."/>
+          </Field>
+
+          <Field label="Fecha de plazo / Alerta (Detona vencimiento)">
+            <input type="date" style={inputStyle} value={form.termino} onChange={e => setF('termino', e.target.value)}/>
+          </Field>
+
+          <Field label="Prioridad interna">
+            <select style={inputStyle} value={form.prioridad} onChange={e => setF('prioridad', e.target.value)}>
+              {PRIORIDADES.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </Field>
+
+          <Field label="Observaciones y notas internas" full>
+            <textarea style={{ ...inputStyle, minHeight: 60, resize: 'vertical' }} value={form.notas} onChange={e => setF('notas', e.target.value)} placeholder="Detalles de la radicación, claves, etc."/>
+          </Field>
+
+          {/* Alertas de Boletín */}
+          <div style={{ gridColumn: '1 / -1', marginTop: 6 }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
               <div
                 onClick={() => setF('alertas_boletin', !form.alertas_boletin)}
@@ -2273,14 +2979,14 @@ export default function Expedientes({ session }) {
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Alertas de Boletín Judicial (CJJ Jalisco)</div>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                  Recibirás un email cuando haya un nuevo acuerdo · fuente: cjj.gob.mx/bulletin
+                  Recibirás un email cuando haya un nuevo acuerdo publicado en el boletín judicial oficial.
                 </div>
               </div>
             </label>
           </div>
 
           {form.alertas_boletin && (
-            <Field label="Email de notificación" full>
+            <Field label="Email de notificación de alertas" full>
               <input
                 type="email" style={inputStyle}
                 value={form.email_notificacion}
@@ -2406,7 +3112,6 @@ export default function Expedientes({ session }) {
       >
         {detalleExp && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {/* Recipient Details */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
                 <div style={labelStyle}>Destinatario (Nombre)</div>
@@ -2430,7 +3135,6 @@ export default function Expedientes({ session }) {
               </div>
             </div>
 
-            {/* Matching Contacts Chips */}
             {cargandoContactoReporte ? (
               <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Buscando teléfono del cliente...</div>
             ) : contactosDisponibles.length > 0 ? (
@@ -2464,7 +3168,6 @@ export default function Expedientes({ session }) {
               </div>
             )}
 
-            {/* Original legal wording */}
             <div>
               <div style={labelStyle}>Acuerdo original (Referencia legal)</div>
               <div style={{
@@ -2477,7 +3180,6 @@ export default function Expedientes({ session }) {
               </div>
             </div>
 
-            {/* Lawyer's Plain Summary */}
             <div>
               <div style={labelStyle}>Explicación en lenguaje sencillo (Traducción para el cliente)</div>
               <textarea
@@ -2488,7 +3190,6 @@ export default function Expedientes({ session }) {
               />
             </div>
 
-            {/* Optional checkbox to save summary in history */}
             <div>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12, color: 'var(--text-secondary)' }}>
                 <input
@@ -2502,7 +3203,6 @@ export default function Expedientes({ session }) {
               </label>
             </div>
 
-            {/* WhatsApp message preview */}
             <div>
               <div style={labelStyle}>Vista previa del mensaje de WhatsApp</div>
               <pre style={{
@@ -2548,7 +3248,7 @@ function DrawerSkeleton({ rows = 3 }) {
 const inputStyle = {
   background: 'var(--surface)', border: '1px solid var(--border)',
   color: 'var(--text)', borderRadius: 'var(--radius)',
-  padding: '9px 12px', fontSize: 13, width: '100%',
+  padding: '9px 12px', fontSize: 13, width: '100%', boxSizing: 'border-box'
 }
 const labelStyle = {
   fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',

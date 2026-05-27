@@ -3,27 +3,44 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { useOrg } from '../context/OrgContext'
 import { useToast } from '../context/ToastContext'
-import { MATERIAS, PRIORIDADES } from '../utils/helpers'
+import { MATERIAS, JUZGADOS_JALISCO, TIPOS, ETAPAS as ETAPAS_EXPEDIENTE, diasHasta, fmtFecha } from '../utils/helpers'
 import PageHeader from '../components/ui/PageHeader'
 import Modal from '../components/ui/Modal'
 import EmptyState from '../components/ui/EmptyState'
+import StatusBadge from '../components/ui/StatusBadge'
 
-// ── Configuración del pipeline ───────────────────────────────
+// ── Configuración del pipeline de prospectos ───────────────────────────────
 const ETAPAS = [
-  { key: 'Nuevo',      label: 'Nuevo',      color: '#3b82f6', bg: 'rgba(59,130,246,.12)'  },
-  { key: 'Contactado', label: 'Contactado', color: '#8b5cf6', bg: 'rgba(139,92,246,.12)'  },
-  { key: 'Reunión',    label: 'Reunión',    color: '#f59e0b', bg: 'rgba(245,158,11,.12)'  },
-  { key: 'Propuesta',  label: 'Propuesta',  color: '#06b6d4', bg: 'rgba(6,182,212,.12)'   },
-  { key: 'Ganado',     label: 'Ganado',     color: '#22c55e', bg: 'rgba(34,197,94,.12)'   },
-  { key: 'Perdido',    label: 'Perdido',    color: '#ef4444', bg: 'rgba(239,68,68,.12)'   },
+  { key: 'Nuevo contacto',        label: 'Nuevo contacto',        color: '#3b82f6', bg: 'rgba(59,130,246,.12)'  },
+  { key: 'Contactado',            label: 'Contactado',            color: '#8b5cf6', bg: 'rgba(139,92,246,.12)'  },
+  { key: 'Información solicitada', label: 'Información solicitada', color: '#06b6d4', bg: 'rgba(6,182,212,.12)'   },
+  { key: 'En análisis',           label: 'En análisis',           color: '#f59e0b', bg: 'rgba(245,158,11,.12)'  },
+  { key: 'Cotización enviada',    label: 'Cotización enviada',    color: '#10b981', bg: 'rgba(16,185,129,.12)'  },
+  { key: 'En negociación',        label: 'En negociación',        color: '#ec4899', bg: 'rgba(236,72,153,.12)'  },
+  { key: 'Cita agendada',         label: 'Cita agendada',         color: '#6366f1', bg: 'rgba(99,102,241,.12)'  },
+  { key: 'Contratado',            label: 'Contratado',            color: '#22c55e', bg: 'rgba(34,197,94,.12)'   },
+  { key: 'No contratado',         label: 'No contratado',         color: '#6b7280', bg: 'rgba(107,114,128,.12)' },
+  { key: 'Perdido',               label: 'Perdido',               color: '#ef4444', bg: 'rgba(239,68,68,.12)'   },
+  { key: 'Recontactar después',   label: 'Recontactar después',   color: '#a855f7', bg: 'rgba(168,85,247,.12)'  },
 ]
 const ETAPA_MAP  = Object.fromEntries(ETAPAS.map(e => [e.key, e]))
-const ORIGENES   = ['Referido', 'Sitio web', 'Redes sociales', 'Llamada directa', 'Publicidad', 'Otro']
+
+const FUENTES = ['Facebook', 'WhatsApp', 'recomendación', 'página web', 'llamada', 'visita', 'otro']
+const TIPOS_ASUNTO = ['mercantil', 'civil', 'familiar', 'laboral', 'administrativo', 'penal', 'corporativo', 'cobranza', 'contrato', 'otro']
+const URGENCIAS = ['baja', 'media', 'alta']
 
 const formVacio = () => ({
   nombre: '', email: '', telefono: '', asunto: '',
-  materia: 'Mercantil', etapa: 'Nuevo', prioridad: 'Normal',
+  materia: 'Mercantil', etapa: 'Nuevo contacto', prioridad: 'Normal',
   origen: '', notas: '', valor_estimado: '',
+  fuente_contacto: 'WhatsApp',
+  tipo_asunto: 'mercantil',
+  descripcion_caso: '',
+  urgencia: 'media',
+  responsable: '',
+  fecha_contacto: new Date().toISOString().slice(0, 10),
+  proximo_seguimiento: '',
+  observaciones: '',
 })
 
 export default function Prospectos({ session }) {
@@ -35,6 +52,17 @@ export default function Prospectos({ session }) {
   const [loading, setLoading]       = useState(true)
   const [vista, setVista]           = useState('kanban') // 'kanban' | 'lista'
   const [buscar, setBuscar]         = useState('')
+  const [miembros, setMiembros]     = useState([])
+
+  // Filtros
+  const [filtros, setFiltros] = useState({
+    etapa: '',
+    fuente_contacto: '',
+    tipo_asunto: '',
+    responsable: '',
+    urgencia: '',
+    proximo_seguimiento: '',
+  })
 
   // Modal crear/editar
   const [modal, setModal]   = useState(false)
@@ -50,7 +78,7 @@ export default function Prospectos({ session }) {
   const [convForm, setConvForm]             = useState({})
   const [convSaving, setConvSaving]         = useState(false)
 
-  // ── Cargar ───────────────────────────────────────────────────
+  // ── Cargar Prospectos ──────────────────────────────────────────
   const cargar = useCallback(async () => {
     if (!org) return
     setLoading(true)
@@ -63,8 +91,26 @@ export default function Prospectos({ session }) {
     setLoading(false)
   }, [org])
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { cargar() }, [cargar])
+  // Cargar miembros del equipo para asignar responsables
+  useEffect(() => {
+    if (!org?.id) return
+    ;(async () => {
+      const { data } = await supabase
+        .from('despacho_miembros')
+        .select('user_id, rol, user_profiles(nombre, email)')
+        .eq('despacho_id', org.id)
+        .eq('activo', true)
+        .in('rol', ['admin', 'abogado', 'asistente'])
+      setMiembros(data || [])
+    })()
+  }, [org?.id])
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      cargar()
+    }, 0)
+    return () => clearTimeout(t)
+  }, [cargar])
 
   // ── CRUD ─────────────────────────────────────────────────────
   function abrirNuevo() {
@@ -75,11 +121,24 @@ export default function Prospectos({ session }) {
 
   function abrirEditar(p) {
     setForm({
-      nombre: p.nombre, email: p.email || '', telefono: p.telefono || '',
-      asunto: p.asunto || '', materia: p.materia || 'Mercantil',
-      etapa: p.etapa, prioridad: p.prioridad || 'Normal',
-      origen: p.origen || '', notas: p.notas || '',
+      nombre: p.nombre,
+      email: p.email || '',
+      telefono: p.telefono || '',
+      asunto: p.asunto || '',
+      materia: p.materia || 'Mercantil',
+      etapa: p.etapa || 'Nuevo contacto',
+      prioridad: p.prioridad || 'Normal',
+      origen: p.origen || '',
+      notas: p.notas || '',
       valor_estimado: p.valor_estimado || '',
+      fuente_contacto: p.fuente_contacto || p.origen || 'WhatsApp',
+      tipo_asunto: p.tipo_asunto || p.materia?.toLowerCase() || 'mercantil',
+      descripcion_caso: p.descripcion_caso || p.asunto || '',
+      urgencia: p.urgencia || (p.prioridad ? p.prioridad.toLowerCase() : 'media'),
+      responsable: p.responsable || '',
+      fecha_contacto: p.fecha_contacto || (p.creado_en ? p.creado_en.slice(0, 10) : new Date().toISOString().slice(0, 10)),
+      proximo_seguimiento: p.proximo_seguimiento || '',
+      observaciones: p.observaciones || p.notas || '',
     })
     setEditId(p.id)
     setModal(true)
@@ -91,13 +150,21 @@ export default function Prospectos({ session }) {
   async function guardar() {
     if (!form.nombre.trim()) { toast('El nombre es obligatorio', 'error'); return }
     setSaving(true)
+    
+    // Mapear campos para compatibilidad bidireccional
     const payload = {
       ...form,
       valor_estimado: form.valor_estimado ? parseFloat(form.valor_estimado) : null,
+      asunto: form.descripcion_caso || form.asunto,
+      notas: form.observaciones || form.notas,
+      materia: form.tipo_asunto ? (form.tipo_asunto.charAt(0).toUpperCase() + form.tipo_asunto.slice(1)) : form.materia,
+      prioridad: form.urgencia ? (form.urgencia.charAt(0).toUpperCase() + form.urgencia.slice(1)) : form.prioridad,
+      origen: form.fuente_contacto || form.origen,
       despacho_id: org.id,
       user_id: session.user.id,
       actualizado_en: new Date().toISOString(),
     }
+    
     let error
     if (editId) {
       ;({ error } = await supabase.from('prospectos').update(payload).eq('id', editId))
@@ -135,7 +202,7 @@ export default function Prospectos({ session }) {
         despacho_id: org.id,
         user_id: session.user.id,
         user_email: session.user.email,
-        accion: 'eliminar_expediente',
+        accion: 'eliminar_prospecto',
         detalles: `Eliminó el prospecto "${nombre}"`
       })
     }
@@ -168,12 +235,19 @@ export default function Prospectos({ session }) {
 
   // ── Convertir a expediente ───────────────────────────────────
   function abrirConvertir(p) {
+    const materiaInferida = p.tipo_asunto ? (p.tipo_asunto.charAt(0).toUpperCase() + p.tipo_asunto.slice(1)) : (p.materia || 'Mercantil')
     setConvForm({
-      num: '', actor: p.nombre, demandado: '',
-      materia: p.materia || 'Mercantil',
-      tipo: 'Juicio Ordinario Mercantil',
-      juzgado: '', etapa: 'Admisión', estado: 'Activo',
-      notas: p.asunto || '',
+      num: '',
+      anio: new Date().getFullYear(),
+      juzgado: '',
+      tipo: 'Juicio Ordinario ' + (materiaInferida === 'Mercantil' ? 'Mercantil' : 'Civil'),
+      actor: p.nombre,
+      demandado: '',
+      etapa: 'Captura inicial',
+      abogado_responsable: p.responsable || '',
+      materia: materiaInferida,
+      fecha_inicio: new Date().toISOString().slice(0, 10),
+      notas: p.descripcion_caso || p.asunto || '',
     })
     setDetalle(p)
     setModalConvertir(true)
@@ -182,11 +256,24 @@ export default function Prospectos({ session }) {
   async function handleConvertir() {
     if (!convForm.num.trim()) { toast('El número de expediente es obligatorio', 'error'); return }
     setConvSaving(true)
+    
     const { data: exp, error } = await supabase
       .from('expedientes')
       .insert({
-        ...convForm,
-        termino: null, prioridad: 'Normal',
+        num: convForm.num,
+        anio: convForm.anio ? parseInt(convForm.anio) : null,
+        juzgado: convForm.juzgado || null,
+        tipo: convForm.tipo || null,
+        actor: convForm.actor || '',
+        demandado: convForm.demandado || '',
+        etapa: convForm.etapa || 'Captura inicial',
+        materia: convForm.materia || 'Mercantil',
+        estado: 'Activo',
+        abogado_responsable: convForm.abogado_responsable || null,
+        fecha_inicio: convForm.fecha_inicio || null,
+        notas: convForm.notas || '',
+        termino: null,
+        prioridad: 'Normal',
         despacho_id: org.id,
         user_id: session.user.id,
         creado_en: new Date().toISOString(),
@@ -197,10 +284,26 @@ export default function Prospectos({ session }) {
 
     if (error) { toast('Error al crear expediente: ' + error.message, 'error'); setConvSaving(false); return }
 
-    // Marcar prospecto como Ganado y enlazar expediente
+    // Marcar prospecto como Contratado y enlazar expediente_id
     await supabase.from('prospectos')
-      .update({ etapa: 'Ganado', expediente_id: exp.id, actualizado_en: new Date().toISOString() })
+      .update({
+        etapa: 'Contratado',
+        expediente_id: exp.id,
+        actualizado_en: new Date().toISOString()
+      })
       .eq('id', detalle.id)
+
+    // Agregar la parte actora en la tabla expediente_partes automáticamente
+    await supabase.from('expediente_partes').insert({
+      expediente_id: exp.id,
+      despacho_id: org.id,
+      nombre: detalle.nombre,
+      rol: 'Actor',
+      domicilio: '',
+      correo: detalle.email || '',
+      telefono: detalle.telefono || '',
+      observaciones: 'Convertido desde prospecto'
+    })
 
     // Log bitacora
     if (org?.id) {
@@ -217,21 +320,43 @@ export default function Prospectos({ session }) {
     setModalConvertir(false)
     toast('✅ Convertido a expediente exitosamente')
     cargar()
+    
     // Navegar al expediente creado
     navigate(`/app/expedientes?q=${encodeURIComponent(convForm.num)}`)
   }
 
-  // ── Filtro ───────────────────────────────────────────────────
+  // ── Filtro de la lista ───────────────────────────────────────────
   const lista = prospectos.filter(p => {
-    if (!buscar.trim()) return true
-    const q = buscar.toLowerCase()
-    return `${p.nombre} ${p.email || ''} ${p.asunto || ''} ${p.telefono || ''}`.toLowerCase().includes(q)
+    if (buscar.trim()) {
+      const q = buscar.toLowerCase()
+      if (!`${p.nombre} ${p.email || ''} ${p.telefono || ''} ${p.asunto || ''} ${p.descripcion_caso || ''}`.toLowerCase().includes(q)) return false
+    }
+    
+    if (filtros.etapa && p.etapa !== filtros.etapa) return false
+    if (filtros.fuente_contacto && p.fuente_contacto !== filtros.fuente_contacto) return false
+    if (filtros.tipo_asunto && p.tipo_asunto !== filtros.tipo_asunto) return false
+    if (filtros.responsable && p.responsable !== filtros.responsable) return false
+    if (filtros.urgencia && p.urgencia !== filtros.urgencia) return false
+    
+    if (filtros.proximo_seguimiento) {
+      if (!p.proximo_seguimiento) return false
+      const hoyStr = new Date().toISOString().slice(0, 10)
+      if (filtros.proximo_seguimiento === 'hoy') {
+        if (p.proximo_seguimiento !== hoyStr) return false
+      } else if (filtros.proximo_seguimiento === 'vencido') {
+        if (p.proximo_seguimiento >= hoyStr) return false
+      } else if (filtros.proximo_seguimiento === 'esta_semana') {
+        const diff = diasHasta(p.proximo_seguimiento)
+        if (diff === null || diff < 0 || diff > 7) return false
+      }
+    }
+    return true
   })
 
   // KPIs
   const total   = prospectos.length
-  const activos = prospectos.filter(p => !['Ganado','Perdido'].includes(p.etapa)).length
-  const ganados = prospectos.filter(p => p.etapa === 'Ganado').length
+  const activos = prospectos.filter(p => !['Contratado','No contratado','Perdido'].includes(p.etapa)).length
+  const ganados = prospectos.filter(p => p.etapa === 'Contratado').length
   const tasa    = total > 0 ? Math.round((ganados / total) * 100) : 0
 
   return (
@@ -239,14 +364,14 @@ export default function Prospectos({ session }) {
       <style>{`
         @keyframes slideIn { from { opacity:0; transform:translateX(24px) } to { opacity:1; transform:translateX(0) } }
         .prosp-card:hover { background: color-mix(in srgb, var(--primary) 5%, var(--surface)) !important; }
+        .filters-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
       `}</style>
 
       <PageHeader
         title="CRM — Prospectos"
-        subtitle="Seguimiento de clientes potenciales"
+        subtitle="Seguimiento de clientes potenciales y prospectos"
         actions={
           <div style={{ display:'flex', gap:8 }}>
-            {/* Toggle vista */}
             <div style={{ display:'flex', background:'var(--surface-3)', border:'1px solid var(--border)', borderRadius:'var(--radius)', overflow:'hidden' }}>
               {[['kanban','⊞'], ['lista','☰']].map(([v, ico]) => (
                 <button key={v} onClick={() => setVista(v)} style={{
@@ -262,7 +387,7 @@ export default function Prospectos({ session }) {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 5v14"/><path d="M5 12h14"/>
                 </svg>
-                Nuevo prospecto
+                Agregar prospecto
               </button>
             )}
           </div>
@@ -272,9 +397,9 @@ export default function Prospectos({ session }) {
       {/* KPIs */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(130px,1fr))', gap:12, marginBottom:16 }}>
         {[
-          { label:'Total', value:total, color:'var(--primary)' },
+          { label:'Total prospectos', value:total, color:'var(--primary)' },
           { label:'En pipeline', value:activos, color:'var(--warning)' },
-          { label:'Ganados', value:ganados, color:'var(--success)' },
+          { label:'Contratados', value:ganados, color:'var(--success)' },
           { label:'Tasa de cierre', value:`${tasa}%`, color:'var(--info)' },
         ].map(k => (
           <div key={k.label} style={{ background:'var(--surface)', border:'1px solid var(--border)', borderRadius:'var(--radius-lg)', padding:'14px 16px' }}>
@@ -284,17 +409,88 @@ export default function Prospectos({ session }) {
         ))}
       </div>
 
-      {/* Buscador */}
-      <div style={{ position:'relative', marginBottom:16, maxWidth:320 }}>
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-          style={{ position:'absolute', left:10, top:'50%', transform:'translateY(-50%)', color:'var(--text-muted)' }}>
-          <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>
-        </svg>
-        <input
-          value={buscar} onChange={e => setBuscar(e.target.value)}
-          placeholder="Buscar prospecto..."
-          style={{ ...inputStyle, paddingLeft:30, width:'100%' }}
-        />
+      {/* Barra de Filtros */}
+      <div className="filters-row">
+        <div style={{ position:'relative', minWidth:220, flex: 1 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+            style={{ position:'absolute', left:10, top:'50%', transform:'translateY(-50%)', color:'var(--text-muted)' }}>
+            <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>
+          </svg>
+          <input
+            value={buscar} onChange={e => setBuscar(e.target.value)}
+            placeholder="Buscar por nombre, teléfono, asunto..."
+            style={{ ...inputStyle, paddingLeft:30, width:'100%' }}
+          />
+        </div>
+        
+        <select
+          value={filtros.etapa}
+          onChange={e => setFiltros(f => ({ ...f, etapa: e.target.value }))}
+          style={{ ...inputStyle, width: 'auto' }}
+        >
+          <option value="">Todas las etapas</option>
+          {ETAPAS.map(e => <option key={e.key} value={e.key}>{e.label}</option>)}
+        </select>
+
+        <select
+          value={filtros.fuente_contacto}
+          onChange={e => setFiltros(f => ({ ...f, fuente_contacto: e.target.value }))}
+          style={{ ...inputStyle, width: 'auto' }}
+        >
+          <option value="">Todas las fuentes</option>
+          {FUENTES.map(f => <option key={f} value={f}>{f}</option>)}
+        </select>
+
+        <select
+          value={filtros.tipo_asunto}
+          onChange={e => setFiltros(f => ({ ...f, tipo_asunto: e.target.value }))}
+          style={{ ...inputStyle, width: 'auto' }}
+        >
+          <option value="">Todos los asuntos</option>
+          {TIPOS_ASUNTO.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+
+        <select
+          value={filtros.responsable}
+          onChange={e => setFiltros(f => ({ ...f, responsable: e.target.value }))}
+          style={{ ...inputStyle, width: 'auto' }}
+        >
+          <option value="">Todos los responsables</option>
+          {miembros.map(m => (
+            <option key={m.user_id} value={m.user_profiles?.nombre || m.user_id}>
+              {m.user_profiles?.nombre || m.user_profiles?.email}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={filtros.urgencia}
+          onChange={e => setFiltros(f => ({ ...f, urgencia: e.target.value }))}
+          style={{ ...inputStyle, width: 'auto' }}
+        >
+          <option value="">Todas las urgencias</option>
+          {URGENCIAS.map(u => <option key={u} value={u}>{u}</option>)}
+        </select>
+
+        <select
+          value={filtros.proximo_seguimiento}
+          onChange={e => setFiltros(f => ({ ...f, proximo_seguimiento: e.target.value }))}
+          style={{ ...inputStyle, width: 'auto' }}
+        >
+          <option value="">Cualquier fecha de seg.</option>
+          <option value="hoy">Seguimiento Hoy</option>
+          <option value="esta_semana">Seguimiento esta semana (7d)</option>
+          <option value="vencido">Seguimiento atrasado / vencido</option>
+        </select>
+
+        {(filtros.etapa || filtros.fuente_contacto || filtros.tipo_asunto || filtros.responsable || filtros.urgencia || filtros.proximo_seguimiento) && (
+          <button
+            onClick={() => setFiltros({ etapa: '', fuente_contacto: '', tipo_asunto: '', responsable: '', urgencia: '', proximo_seguimiento: '' })}
+            style={{ ...btnSec, color: 'var(--danger)', borderColor: 'var(--danger)', padding: '8px 12px', fontSize: 11 }}
+          >
+            Limpiar filtros
+          </button>
+        )}
       </div>
 
       {/* ── Vista Kanban ── */}
@@ -304,7 +500,7 @@ export default function Prospectos({ session }) {
             const cards = lista.filter(p => p.etapa === etapa.key)
             return (
               <div key={etapa.key} style={{
-                minWidth:220, maxWidth:260, flex:'0 0 220px',
+                minWidth:230, maxWidth:260, flex:'0 0 230px',
                 background:'var(--surface-3)', border:'1px solid var(--border)',
                 borderRadius:'var(--radius-lg)', overflow:'hidden',
               }}>
@@ -314,7 +510,7 @@ export default function Prospectos({ session }) {
                   borderBottom:'1px solid var(--border)',
                   borderTop:`3px solid ${etapa.color}`,
                 }}>
-                  <span style={{ fontSize:12, fontWeight:700, color:'var(--text)' }}>{etapa.label}</span>
+                  <span style={{ fontSize:12, fontWeight:700, color:'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 150 }} title={etapa.label}>{etapa.label}</span>
                   <span style={{
                     fontSize:11, fontWeight:700, padding:'2px 8px', borderRadius:999,
                     background: etapa.bg, color: etapa.color,
@@ -322,7 +518,7 @@ export default function Prospectos({ session }) {
                 </div>
 
                 {/* Cards */}
-                <div style={{ padding:8, display:'flex', flexDirection:'column', gap:6, minHeight:80 }}>
+                <div style={{ padding:8, display:'flex', flexDirection:'column', gap:6, minHeight:100, maxHeight: 600, overflowY: 'auto' }}>
                   {loading && <div style={{ fontSize:12, color:'var(--text-muted)', padding:'12px 4px', textAlign:'center' }}>Cargando...</div>}
                   {!loading && cards.length === 0 && (
                     <div style={{ fontSize:11, color:'var(--text-muted)', padding:'16px 4px', textAlign:'center', fontStyle:'italic' }}>Sin prospectos</div>
@@ -340,14 +536,45 @@ export default function Prospectos({ session }) {
                       }}
                     >
                       <div style={{ fontSize:13, fontWeight:700, color:'var(--text)', marginBottom:3 }}>{p.nombre}</div>
-                      {p.asunto && <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:4, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{p.asunto}</div>}
+                      {(p.descripcion_caso || p.asunto) && (
+                        <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:4, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                          {p.descripcion_caso || p.asunto}
+                        </div>
+                      )}
+                      
+                      {p.telefono && (
+                        <div style={{ fontSize:11, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                          📞 <span style={{ fontSize: 11 }}>{p.telefono}</span>
+                        </div>
+                      )}
+
+                      {p.proximo_seguimiento && (
+                        <div style={{
+                          fontSize: 10,
+                          fontWeight: 600,
+                          color: diasHasta(p.proximo_seguimiento) < 0 ? 'var(--danger)' : 'var(--text-secondary)',
+                          marginBottom: 4
+                        }}>
+                          📅 Seg: {fmtFecha(p.proximo_seguimiento)}
+                        </div>
+                      )}
+
                       <div style={{ display:'flex', gap:4, flexWrap:'wrap', marginTop:4 }}>
-                        <span style={{ fontSize:10, padding:'2px 6px', borderRadius:999, background:'var(--surface-3)', color:'var(--text-muted)', border:'1px solid var(--border)' }}>{p.materia}</span>
-                        {p.valor_estimado && (
-                          <span style={{ fontSize:10, padding:'2px 6px', borderRadius:999, background:'rgba(34,197,94,.1)', color:'var(--success)', border:'1px solid rgba(34,197,94,.2)' }}>
-                            ${Number(p.valor_estimado).toLocaleString('es-MX')}
+                        <span style={{ fontSize:10, padding:'2px 6px', borderRadius:999, background:'var(--surface-3)', color:'var(--text-muted)', border:'1px solid var(--border)', textTransform: 'capitalize' }}>
+                          {p.tipo_asunto || p.materia}
+                        </span>
+                        
+                        {p.urgencia && (
+                          <span style={{
+                            fontSize:9, padding:'1px 5px', borderRadius:999,
+                            background: p.urgencia === 'alta' ? 'rgba(239,68,68,.1)' : p.urgencia === 'media' ? 'rgba(245,158,11,.1)' : 'rgba(107,114,128,.1)',
+                            color: p.urgencia === 'alta' ? 'var(--danger)' : p.urgencia === 'media' ? 'var(--warning)' : 'var(--text-muted)',
+                            border: '1px solid currentColor', textTransform: 'uppercase', fontWeight: 700
+                          }}>
+                            {p.urgencia}
                           </span>
                         )}
+
                         {p.expediente_id && (
                           <span style={{ fontSize:10, padding:'2px 6px', borderRadius:999, background:'rgba(34,197,94,.15)', color:'var(--success)', fontWeight:700 }}>✓ Exp.</span>
                         )}
@@ -368,19 +595,21 @@ export default function Prospectos({ session }) {
             <thead>
               <tr>
                 <th>Nombre</th>
-                <th>Asunto</th>
-                <th>Materia</th>
+                <th>Teléfono</th>
+                <th>Tipo de asunto</th>
+                <th>Fuente</th>
                 <th>Etapa</th>
-                <th>Valor est.</th>
-                <th>Origen</th>
+                <th>Responsable</th>
+                <th>Próximo seguimiento</th>
+                <th>Estatus</th>
                 <th style={{ width:60 }}></th>
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={7} style={{ textAlign:'center', padding:32, color:'var(--text-muted)' }}>Cargando...</td></tr>}
+              {loading && <tr><td colSpan={9} style={{ textAlign:'center', padding:32, color:'var(--text-muted)' }}>Cargando...</td></tr>}
               {!loading && lista.length === 0 && (
-                <tr><td colSpan={7} style={{ padding:32 }}>
-                  <EmptyState title="Sin prospectos" subtitle="Agrega tu primer prospecto para empezar." action={canWrite && <button onClick={abrirNuevo} style={btnPri}>+ Nuevo prospecto</button>}/>
+                <tr><td colSpan={9} style={{ padding:32 }}>
+                  <EmptyState title="Sin prospectos" subtitle="Agrega tu primer prospecto para empezar." action={canWrite && <button onClick={abrirNuevo} style={btnPri}>+ Agregar prospecto</button>}/>
                 </td></tr>
               )}
               {lista.map(p => {
@@ -391,17 +620,25 @@ export default function Prospectos({ session }) {
                       <div style={{ fontSize:13, fontWeight:700, color:'var(--text)' }}>{p.nombre}</div>
                       {p.email && <div style={{ fontSize:11, color:'var(--text-muted)' }}>{p.email}</div>}
                     </td>
-                    <td style={{ fontSize:12, color:'var(--text-muted)', maxWidth:200, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{p.asunto || '—'}</td>
-                    <td style={{ fontSize:12 }}>{p.materia}</td>
+                    <td style={{ fontSize:12, color:'var(--text)' }}>{p.telefono || '—'}</td>
+                    <td style={{ fontSize:12, textTransform: 'capitalize' }}>{p.tipo_asunto || p.materia || '—'}</td>
+                    <td style={{ fontSize:12, color:'var(--text-muted)' }}>{p.fuente_contacto || p.origen || '—'}</td>
                     <td>
-                      <span style={{ fontSize:11, fontWeight:700, padding:'3px 9px', borderRadius:999, background: et?.bg, color: et?.color }}>
+                      <span style={{ fontSize:11, fontWeight:700, padding:'3px 9px', borderRadius:999, background: et?.bg || 'var(--surface-3)', color: et?.color || 'var(--text)' }}>
                         {p.etapa}
                       </span>
                     </td>
-                    <td style={{ fontSize:12, color:'var(--text)' }}>
-                      {p.valor_estimado ? `$${Number(p.valor_estimado).toLocaleString('es-MX')}` : '—'}
+                    <td style={{ fontSize:12, color:'var(--text)' }}>{p.responsable || '—'}</td>
+                    <td style={{ fontSize:12, color: diasHasta(p.proximo_seguimiento) < 0 ? 'var(--danger)' : 'var(--text)', fontWeight: diasHasta(p.proximo_seguimiento) < 0 ? 600 : 400 }}>
+                      {p.proximo_seguimiento ? fmtFecha(p.proximo_seguimiento) : '—'}
                     </td>
-                    <td style={{ fontSize:12, color:'var(--text-muted)' }}>{p.origen || '—'}</td>
+                    <td>
+                      {p.expediente_id ? (
+                        <StatusBadge tone="success">Contratado</StatusBadge>
+                      ) : (
+                        <StatusBadge tone="warning">Pendiente</StatusBadge>
+                      )}
+                    </td>
                     <td onClick={e => e.stopPropagation()}>
                       <div style={{ display:'flex', gap:4, justifyContent:'flex-end' }}>
                         {canWrite && (
@@ -425,7 +662,7 @@ export default function Prospectos({ session }) {
       {/* ── Drawer detalle ── */}
       {detalle && (
         <div style={{
-          position:'fixed', top:0, right:0, bottom:0, width:400,
+          position:'fixed', top:0, right:0, bottom:0, width:440,
           background:'var(--surface)', borderLeft:'1px solid var(--border)',
           boxShadow:'-8px 0 32px rgba(0,0,0,.15)',
           display:'flex', flexDirection:'column', zIndex:200,
@@ -436,8 +673,8 @@ export default function Prospectos({ session }) {
             <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:10 }}>
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontSize:17, fontWeight:800, color:'var(--text)' }}>{detalle.nombre}</div>
-                {detalle.email && <div style={{ fontSize:12, color:'var(--text-muted)', marginTop:2 }}>{detalle.email}</div>}
-                {detalle.telefono && <div style={{ fontSize:12, color:'var(--text-muted)' }}>{detalle.telefono}</div>}
+                {detalle.email && <div style={{ fontSize:12, color:'var(--text-muted)', marginTop:2 }}>✉️ {detalle.email}</div>}
+                {detalle.telefono && <div style={{ fontSize:12, color:'var(--text-muted)' }}>📞 {detalle.telefono}</div>}
               </div>
               <button onClick={() => setDetalle(null)} style={{ ...iconBtn, padding:'5px 8px', fontSize:14 }}>✕</button>
             </div>
@@ -446,8 +683,8 @@ export default function Prospectos({ session }) {
             <div style={{ marginTop:10 }}>
               <span style={{
                 fontSize:12, fontWeight:700, padding:'4px 12px', borderRadius:999,
-                background: ETAPA_MAP[detalle.etapa]?.bg,
-                color: ETAPA_MAP[detalle.etapa]?.color,
+                background: ETAPA_MAP[detalle.etapa]?.bg || 'var(--surface-3)',
+                color: ETAPA_MAP[detalle.etapa]?.color || 'var(--text)',
               }}>{detalle.etapa}</span>
             </div>
           </div>
@@ -457,40 +694,44 @@ export default function Prospectos({ session }) {
             {/* Info */}
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
               {[
-                ['Materia', detalle.materia],
-                ['Prioridad', detalle.prioridad],
-                ['Origen', detalle.origen || '—'],
-                ['Valor est.', detalle.valor_estimado ? `$${Number(detalle.valor_estimado).toLocaleString('es-MX')}` : '—'],
-                ['Creado', new Date(detalle.creado_en).toLocaleDateString('es-MX')],
+                ['Tipo de asunto', detalle.tipo_asunto || detalle.materia || '—'],
+                ['Fuente de contacto', detalle.fuente_contacto || detalle.origen || '—'],
+                ['Urgencia', detalle.urgencia || detalle.prioridad || 'media'],
+                ['Responsable', detalle.responsable || '—'],
+                ['Monto aproximado', detalle.valor_estimado ? `$${Number(detalle.valor_estimado).toLocaleString('es-MX')}` : '—'],
+                ['Primer Contacto', detalle.fecha_contacto ? fmtFecha(detalle.fecha_contacto) : '—'],
+                ['Próximo Seguimiento', detalle.proximo_seguimiento ? fmtFecha(detalle.proximo_seguimiento) : '—'],
+                ['Fecha Registro', new Date(detalle.creado_en).toLocaleDateString('es-MX')],
               ].map(([k,v]) => (
                 <div key={k} style={{ background:'var(--surface-3)', border:'1px solid var(--border)', borderRadius:'var(--radius)', padding:'8px 12px' }}>
                   <div style={{ fontSize:10, color:'var(--text-muted)', fontWeight:700, textTransform:'uppercase', letterSpacing:'.5px', marginBottom:2 }}>{k}</div>
-                  <div style={{ fontSize:13, color:'var(--text)', fontWeight:500 }}>{v}</div>
+                  <div style={{ fontSize:13, color:'var(--text)', fontWeight:500, textTransform: k === 'Tipo de asunto' ? 'capitalize' : 'none' }}>{v}</div>
                 </div>
               ))}
             </div>
 
-            {detalle.asunto && (
+            {(detalle.descripcion_caso || detalle.asunto) && (
               <div style={{ background:'var(--surface-3)', border:'1px solid var(--border)', borderRadius:'var(--radius)', padding:'10px 14px' }}>
-                <div style={{ fontSize:10, color:'var(--text-muted)', fontWeight:700, textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Asunto</div>
-                <div style={{ fontSize:13, color:'var(--text)', lineHeight:1.6 }}>{detalle.asunto}</div>
+                <div style={{ fontSize:10, color:'var(--text-muted)', fontWeight:700, textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Descripción del caso</div>
+                <div style={{ fontSize:13, color:'var(--text)', lineHeight:1.6 }}>{detalle.descripcion_caso || detalle.asunto}</div>
               </div>
             )}
-            {detalle.notas && (
+            
+            {(detalle.observaciones || detalle.notas) && (
               <div style={{ background:'var(--surface-3)', border:'1px solid var(--border)', borderRadius:'var(--radius)', padding:'10px 14px' }}>
-                <div style={{ fontSize:10, color:'var(--text-muted)', fontWeight:700, textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Notas</div>
-                <div style={{ fontSize:13, color:'var(--text)', lineHeight:1.6, whiteSpace:'pre-wrap' }}>{detalle.notas}</div>
+                <div style={{ fontSize:10, color:'var(--text-muted)', fontWeight:700, textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Observaciones</div>
+                <div style={{ fontSize:13, color:'var(--text)', lineHeight:1.6, whiteSpace:'pre-wrap' }}>{detalle.observaciones || detalle.notas}</div>
               </div>
             )}
 
             {/* Mover etapa */}
-            {canWrite && !['Ganado','Perdido'].includes(detalle.etapa) && (
+            {canWrite && detalle.etapa !== 'Contratado' && (
               <div>
-                <div style={{ fontSize:11, color:'var(--text-muted)', fontWeight:700, textTransform:'uppercase', letterSpacing:'.5px', marginBottom:8 }}>Mover a</div>
+                <div style={{ fontSize:11, color:'var(--text-muted)', fontWeight:700, textTransform:'uppercase', letterSpacing:'.5px', marginBottom:8 }}>Mover etapa a</div>
                 <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
                   {ETAPAS.filter(e => e.key !== detalle.etapa).map(e => (
                     <button key={e.key} onClick={() => moverEtapa(detalle.id, e.key)} style={{
-                      fontSize:11, fontWeight:700, padding:'5px 12px', borderRadius:999,
+                      fontSize:10, fontWeight:700, padding:'4px 10px', borderRadius:999,
                       border:`1px solid ${e.color}`, background: e.bg, color: e.color, cursor:'pointer',
                     }}>{e.label}</button>
                   ))}
@@ -501,12 +742,12 @@ export default function Prospectos({ session }) {
             {/* Expediente vinculado */}
             {detalle.expediente_id && (
               <div style={{ padding:'10px 14px', background:'rgba(34,197,94,.08)', border:'1px solid rgba(34,197,94,.25)', borderRadius:'var(--radius)' }}>
-                <div style={{ fontSize:12, fontWeight:700, color:'var(--success)' }}>✓ Convertido a expediente</div>
+                <div style={{ fontSize:12, fontWeight:700, color:'var(--success)' }}>✓ Convertido en expediente</div>
                 <button
-                  onClick={() => navigate(`/app/expedientes`)}
-                  style={{ fontSize:11, color:'var(--primary)', background:'none', border:'none', cursor:'pointer', padding:0, marginTop:4 }}
+                  onClick={() => navigate(`/app/expedientes?q=${encodeURIComponent(detalle.nombre)}`)}
+                  style={{ fontSize:11, color:'var(--primary)', background:'none', border:'none', cursor:'pointer', padding:0, marginTop:4, fontWeight: 600 }}
                 >
-                  Ver expediente →
+                  Ir a Expediente →
                 </button>
               </div>
             )}
@@ -515,9 +756,9 @@ export default function Prospectos({ session }) {
           {/* Pie */}
           {canWrite && (
             <div style={{ padding:'12px 20px', borderTop:'1px solid var(--border)', display:'flex', gap:8, flexShrink:0 }}>
-              {!detalle.expediente_id && detalle.etapa !== 'Perdido' && (
+              {!detalle.expediente_id && (
                 <button onClick={() => abrirConvertir(detalle)} style={{ ...btnPri, flex:1, justifyContent:'center', fontSize:12 }}>
-                  ⚡ Convertir a expediente
+                  ⚡ Convertir en expediente
                 </button>
               )}
               <button onClick={() => abrirEditar(detalle)} style={{ ...btnSec, fontSize:12 }}>Editar</button>
@@ -535,13 +776,13 @@ export default function Prospectos({ session }) {
         />
       )}
 
-      {/* ── Modal crear/editar ── */}
+      {/* ── Modal crear/editar prospecto ── */}
       <Modal
         open={modal}
         onClose={() => setModal(false)}
-        title={editId ? 'Editar prospecto' : 'Nuevo prospecto'}
-        subtitle="Captura los datos del cliente potencial"
-        width={640}
+        title={editId ? 'Editar prospecto' : 'Agregar prospecto'}
+        subtitle="Captura los datos detallados del prospecto o cliente potencial"
+        width={720}
         footer={
           <>
             <button onClick={() => setModal(false)} style={btnSec}>Cancelar</button>
@@ -552,44 +793,71 @@ export default function Prospectos({ session }) {
         }
       >
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
-          <Field label="Nombre completo / Empresa *" full>
+          <Field label="Nombre completo / Razón Social *" full>
             <input style={inputStyle} value={form.nombre} onChange={e => setF('nombre', e.target.value)} placeholder="Juan Pérez / Empresa SA"/>
           </Field>
+          
+          <Field label="Teléfono de contacto">
+            <input style={inputStyle} value={form.telefono} onChange={e => setF('telefono', e.target.value)} placeholder="33 1234 5678"/>
+          </Field>
+          
           <Field label="Correo electrónico">
             <input style={inputStyle} type="email" value={form.email} onChange={e => setF('email', e.target.value)} placeholder="correo@ejemplo.com"/>
           </Field>
-          <Field label="Teléfono">
-            <input style={inputStyle} value={form.telefono} onChange={e => setF('telefono', e.target.value)} placeholder="33 1234 5678"/>
-          </Field>
-          <Field label="Materia">
-            <select style={inputStyle} value={form.materia} onChange={e => setF('materia', e.target.value)}>
-              {MATERIAS.map(m => <option key={m}>{m}</option>)}
+
+          <Field label="Fuente de contacto">
+            <select style={inputStyle} value={form.fuente_contacto} onChange={e => setF('fuente_contacto', e.target.value)}>
+              {FUENTES.map(f => <option key={f} value={f}>{f}</option>)}
             </select>
           </Field>
-          <Field label="Etapa del pipeline">
+
+          <Field label="Tipo de asunto (Materia)">
+            <select style={inputStyle} value={form.tipo_asunto} onChange={e => setF('tipo_asunto', e.target.value)}>
+              {TIPOS_ASUNTO.map(t => <option key={t} value={t}>{t.toUpperCase()}</option>)}
+            </select>
+          </Field>
+
+          <Field label="Urgencia">
+            <select style={inputStyle} value={form.urgencia} onChange={e => setF('urgencia', e.target.value)}>
+              {URGENCIAS.map(u => <option key={u} value={u}>{u.toUpperCase()}</option>)}
+            </select>
+          </Field>
+
+          <Field label="Etapa del prospecto">
             <select style={inputStyle} value={form.etapa} onChange={e => setF('etapa', e.target.value)}>
-              {ETAPAS.map(e => <option key={e.key}>{e.key}</option>)}
+              {ETAPAS.map(e => <option key={e.key} value={e.key}>{e.label}</option>)}
             </select>
           </Field>
-          <Field label="Prioridad">
-            <select style={inputStyle} value={form.prioridad} onChange={e => setF('prioridad', e.target.value)}>
-              {PRIORIDADES.map(p => <option key={p}>{p}</option>)}
+
+          <Field label="Abogado Responsable">
+            <select style={inputStyle} value={form.responsable} onChange={e => setF('responsable', e.target.value)}>
+              <option value="">— Sin asignar —</option>
+              {miembros.map(m => (
+                <option key={m.user_id} value={m.user_profiles?.nombre || m.user_id}>
+                  {m.user_profiles?.nombre || m.user_profiles?.email} ({m.rol})
+                </option>
+              ))}
             </select>
           </Field>
-          <Field label="Origen">
-            <select style={inputStyle} value={form.origen} onChange={e => setF('origen', e.target.value)}>
-              <option value="">— Sin especificar —</option>
-              {ORIGENES.map(o => <option key={o}>{o}</option>)}
-            </select>
+
+          <Field label="Fecha de primer contacto">
+            <input style={inputStyle} type="date" value={form.fecha_contacto} onChange={e => setF('fecha_contacto', e.target.value)}/>
           </Field>
-          <Field label="Valor estimado del caso (MXN)">
+
+          <Field label="Fecha de próximo seguimiento">
+            <input style={inputStyle} type="date" value={form.proximo_seguimiento} onChange={e => setF('proximo_seguimiento', e.target.value)}/>
+          </Field>
+
+          <Field label="Monto aproximado del asunto (MXN)">
             <input style={inputStyle} type="number" min="0" value={form.valor_estimado} onChange={e => setF('valor_estimado', e.target.value)} placeholder="0.00"/>
           </Field>
-          <Field label="Asunto / Descripción del caso" full>
-            <textarea style={{ ...inputStyle, minHeight:70, resize:'vertical' }} value={form.asunto} onChange={e => setF('asunto', e.target.value)} placeholder="Breve descripción del asunto legal..."/>
+
+          <Field label="Descripción breve del caso" full>
+            <textarea style={{ ...inputStyle, minHeight:70, resize:'vertical' }} value={form.descripcion_caso} onChange={e => setF('descripcion_caso', e.target.value)} placeholder="¿De qué trata el caso? Detalla brevemente la problemática legal..."/>
           </Field>
-          <Field label="Notas internas" full>
-            <textarea style={{ ...inputStyle, minHeight:60, resize:'vertical' }} value={form.notas} onChange={e => setF('notas', e.target.value)} placeholder="Notas del equipo, recordatorios..."/>
+
+          <Field label="Observaciones y notas internas" full>
+            <textarea style={{ ...inputStyle, minHeight:60, resize:'vertical' }} value={form.observaciones} onChange={e => setF('observaciones', e.target.value)} placeholder="Comentarios del seguimiento, acuerdos preliminares, etc."/>
           </Field>
         </div>
       </Modal>
@@ -598,48 +866,120 @@ export default function Prospectos({ session }) {
       <Modal
         open={modalConvertir}
         onClose={() => setModalConvertir(false)}
-        title="Convertir a expediente"
-        subtitle={`Crear expediente para: ${detalle?.nombre}`}
-        width={560}
+        title="Convertir prospecto en expediente"
+        subtitle={`Completa los datos judiciales para abrir el expediente del cliente: ${detalle?.nombre}`}
+        width={600}
         footer={
           <>
             <button onClick={() => setModalConvertir(false)} style={btnSec}>Cancelar</button>
             <button onClick={handleConvertir} disabled={convSaving} style={btnPri}>
-              {convSaving ? 'Creando...' : '⚡ Crear expediente'}
+              {convSaving ? 'Creando expediente...' : '⚡ Confirmar y crear expediente'}
             </button>
           </>
         }
       >
         <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
           <div style={{ padding:'10px 14px', background:'var(--surface-3)', border:'1px solid var(--border)', borderRadius:'var(--radius)', fontSize:12, color:'var(--text-muted)' }}>
-            El prospecto quedará marcado como <strong style={{ color:'var(--success)' }}>Ganado</strong> y se vinculará al expediente.
+            Se creará el expediente en base de datos. El prospecto se marcará como <strong style={{ color:'var(--success)' }}>Contratado</strong> y se vinculará.
           </div>
-          <Field label="Número de expediente *">
-            <input style={inputStyle} value={convForm.num || ''} onChange={e => setConvForm(f => ({ ...f, num: e.target.value }))} placeholder="1234/2025"/>
+          
+          <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr', gap:12 }}>
+            <Field label="Número de expediente *">
+              <input style={inputStyle} value={convForm.num || ''} onChange={e => setConvForm(f => ({ ...f, num: e.target.value }))} placeholder="Ej: 1234/2026"/>
+            </Field>
+            
+            <Field label="Año *">
+              <input style={inputStyle} type="number" value={convForm.anio || ''} onChange={e => setConvForm(f => ({ ...f, anio: e.target.value }))} placeholder="2026"/>
+            </Field>
+          </div>
+
+          <Field label="Juzgado *">
+            <select
+              style={inputStyle}
+              value={convForm.juzgado || ''}
+              onChange={e => setConvForm(f => ({ ...f, juzgado: e.target.value }))}
+            >
+              <option value="">— Seleccionar Juzgado —</option>
+              {JUZGADOS_JALISCO.map(g => (
+                <optgroup key={g.grupo} label={g.grupo}>
+                  {g.items.map(j => <option key={j} value={j}>{j}</option>)}
+                </optgroup>
+              ))}
+            </select>
           </Field>
-          <Field label="Actor (parte actora)">
-            <input style={inputStyle} value={convForm.actor || ''} onChange={e => setConvForm(f => ({ ...f, actor: e.target.value }))}/>
-          </Field>
-          <Field label="Demandado">
-            <input style={inputStyle} value={convForm.demandado || ''} onChange={e => setConvForm(f => ({ ...f, demandado: e.target.value }))} placeholder="Contraparte"/>
-          </Field>
+
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
             <Field label="Materia">
-              <select style={inputStyle} value={convForm.materia || 'Mercantil'} onChange={e => setConvForm(f => ({ ...f, materia: e.target.value }))}>
-                {MATERIAS.map(m => <option key={m}>{m}</option>)}
+              <select
+                style={inputStyle}
+                value={convForm.materia || 'Mercantil'}
+                onChange={e => setConvForm(f => ({ ...f, materia: e.target.value }))}
+              >
+                {MATERIAS.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             </Field>
-            <Field label="Tipo">
-              <input style={inputStyle} value={convForm.tipo || ''} onChange={e => setConvForm(f => ({ ...f, tipo: e.target.value }))} placeholder="Juicio Ordinario..."/>
+
+            <Field label="Tipo de juicio *">
+              <select
+                style={inputStyle}
+                value={convForm.tipo || ''}
+                onChange={e => setConvForm(f => ({ ...f, tipo: e.target.value }))}
+              >
+                <option value="">— Seleccionar Tipo de Juicio —</option>
+                {TIPOS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
             </Field>
           </div>
+
+          <Field label="Parte Actora (pre-llenada)">
+            <input style={inputStyle} value={convForm.actor || ''} onChange={e => setConvForm(f => ({ ...f, actor: e.target.value }))}/>
+          </Field>
+
+          <Field label="Parte Demandada *">
+            <input style={inputStyle} value={convForm.demandado || ''} onChange={e => setConvForm(f => ({ ...f, demandado: e.target.value }))} placeholder="Nombre de la contraparte"/>
+          </Field>
+
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <Field label="Etapa procesal inicial">
+              <select
+                style={inputStyle}
+                value={convForm.etapa || 'Captura inicial'}
+                onChange={e => setConvForm(f => ({ ...f, etapa: e.target.value }))}
+              >
+                {ETAPAS_EXPEDIENTE.map(e => <option key={e} value={e}>{e}</option>)}
+              </select>
+            </Field>
+
+            <Field label="Abogado Responsable">
+              <select
+                style={inputStyle}
+                value={convForm.abogado_responsable || ''}
+                onChange={e => setConvForm(f => ({ ...f, abogado_responsable: e.target.value }))}
+              >
+                <option value="">— Seleccionar Responsable —</option>
+                {miembros.map(m => (
+                  <option key={m.user_id} value={m.user_profiles?.nombre || m.user_id}>
+                    {m.user_profiles?.nombre || m.user_profiles?.email}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+
+          <Field label="Fecha de inicio">
+            <input style={inputStyle} type="date" value={convForm.fecha_inicio || ''} onChange={e => setConvForm(f => ({ ...f, fecha_inicio: e.target.value }))}/>
+          </Field>
+
+          <Field label="Observaciones iniciales">
+            <textarea style={{ ...inputStyle, minHeight:50, resize:'vertical' }} value={convForm.notes || convForm.notas || ''} onChange={e => setConvForm(f => ({ ...f, notes: e.target.value }))}/>
+          </Field>
         </div>
       </Modal>
     </div>
   )
 }
 
-// ── Helpers locales ──────────────────────────────────────────
+// Helper local para campos del formulario
 function Field({ label, children, full }) {
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:4, gridColumn: full ? '1 / -1' : 'auto' }}>
