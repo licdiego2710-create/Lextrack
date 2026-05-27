@@ -276,7 +276,9 @@ export default function Dashboard({ session }) {
                 const d = diasHasta(e.proxima_fecha || e.termino)
                 const u = urgencyColor(d)
                 return (
-                  <div key={e.id} style={listRow}>
+                  <div key={e.id} onClick={() => navigate(`/app/expedientes?q=${encodeURIComponent(e.num)}`)} style={{ ...listRow, cursor: 'pointer' }}
+                    onMouseEnter={el => el.currentTarget.style.background = 'var(--surface-3)'}
+                    onMouseLeave={el => el.currentTarget.style.background = ''}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--primary)' }}>{e.num}</div>
                       <div style={{ fontSize: 13, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -303,7 +305,10 @@ export default function Dashboard({ session }) {
                 const d = diasHasta(e.termino)
                 const u = urgencyColor(d)
                 return (
-                  <div key={e.id} style={listRow}>
+                  <div key={e.id} onClick={() => navigate(`/app/expedientes?q=${encodeURIComponent(e.num)}`)}
+                    style={{ ...listRow, cursor: 'pointer' }}
+                    onMouseEnter={el => el.currentTarget.style.background = 'var(--surface-3)'}
+                    onMouseLeave={el => el.currentTarget.style.background = ''}>
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: u.color, flexShrink: 0 }}/>
                     <div style={{ fontSize: 12, color: 'var(--primary)', fontWeight: 700, minWidth: 70 }}>{e.num}</div>
                     <div style={{ flex: 1, fontSize: 13, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
