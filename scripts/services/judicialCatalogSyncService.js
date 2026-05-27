@@ -20,8 +20,11 @@ import { getCatalogoTercerCircuito }   from '../providers/federalAmparoJaliscoPr
 
 // ─── SUPABASE ────────────────────────────────────────────────────────────────
 
-let rawUrl = (process.env.SUPABASE_URL || 'https://srzyzkiozqtsdzydyouk.supabase.co').trim()
-if (rawUrl && !rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+let rawUrl = (process.env.SUPABASE_URL || '').trim()
+const isPlaceholder = !rawUrl || rawUrl.includes('YOUR_') || rawUrl.includes('PLACEHOLDER') || rawUrl.includes('***') || rawUrl.length < 10
+if (isPlaceholder) {
+  rawUrl = 'https://srzyzkiozqtsdzydyouk.supabase.co'
+} else if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
   rawUrl = 'https://' + rawUrl
 }
 const supabase = createClient(
