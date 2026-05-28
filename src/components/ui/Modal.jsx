@@ -1,7 +1,16 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 // Modal reutilizable con overlay, escape para cerrar, contenido scrollable.
+// En móvil se muestra como sheet desde abajo (pantalla casi completa).
 export default function Modal({ open, title, subtitle, onClose, children, footer, width = 640 }) {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
+
+  useEffect(() => {
+    const h = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', h)
+    return () => window.removeEventListener('resize', h)
+  }, [])
+
   useEffect(() => {
     if (!open) return
     const h = e => { if (e.key === 'Escape') onClose?.() }
@@ -24,9 +33,9 @@ export default function Modal({ open, title, subtitle, onClose, children, footer
         backdropFilter: 'blur(4px)',
         zIndex: 200,
         display: 'flex',
-        alignItems: 'center',
+        alignItems: isMobile ? 'flex-end' : 'center',
         justifyContent: 'center',
-        padding: '20px',
+        padding: isMobile ? '0' : '20px',
         animation: 'fadeIn 0.15s ease-out',
       }}
     >
@@ -35,13 +44,14 @@ export default function Modal({ open, title, subtitle, onClose, children, footer
         style={{
           background: 'var(--surface)',
           border: '1px solid var(--border)',
-          borderRadius: 'var(--radius-xl)',
+          borderRadius: isMobile ? 'var(--radius-xl) var(--radius-xl) 0 0' : 'var(--radius-xl)',
           width: '100%',
-          maxWidth: `${width}px`,
-          maxHeight: '90vh',
+          maxWidth: isMobile ? '100%' : `${width}px`,
+          maxHeight: isMobile ? '92vh' : '90vh',
           display: 'flex',
           flexDirection: 'column',
           boxShadow: 'var(--shadow-xl)',
+          paddingBottom: isMobile ? 'env(safe-area-inset-bottom)' : '0',
         }}
       >
         <div style={{

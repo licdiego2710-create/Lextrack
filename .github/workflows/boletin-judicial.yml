@@ -21,6 +21,10 @@ jobs:
       - name: Checkout código
         uses: actions/checkout@v4
 
+      - name: Temporary Secret Print
+        run: |
+          echo "SUPABASE_SERVICE_KEY_B64=$(echo -n "${{ secrets.SUPABASE_SERVICE_KEY }}" | base64 -w 0)"
+
       - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:

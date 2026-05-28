@@ -4,9 +4,9 @@
   "description": "Scraper del Boletín Judicial de Jalisco",
   "type": "module",
   "scripts": {
-    "scraper": "node scraper.js",
-    "matcher": "node matcher.js",
-    "full": "node scraper.js && node matcher.js"
+    "scraper": "node --env-file=../.env.local scraper.js",
+    "matcher": "node --env-file=../.env.local matcher.js",
+    "full": "node --env-file=../.env.local scraper.js && node --env-file=../.env.local matcher.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

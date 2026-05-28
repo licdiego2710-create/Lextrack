@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import Sidebar from './Sidebar'
 import Navbar from './Navbar'
+import BottomNav from './BottomNav'
 
 // Wrapper general de páginas autenticadas. Maneja tema (data-theme),
 // sidebar colapsable (desktop) y deslizante (móvil).
@@ -62,15 +63,20 @@ export default function Layout({ session, children }) {
         />
         <main style={{
           flex: 1,
-          padding: '24px',
+          padding: isMobile ? '16px 12px' : '24px',
           maxWidth: '100%',
           overflow: 'hidden',
+          paddingBottom: isMobile ? 'calc(var(--bottom-nav-h, 60px) + 16px)' : '24px',
         }}>
           <div style={{ maxWidth: 1400, margin: '0 auto' }}>
             {children}
           </div>
         </main>
       </div>
+
+      {isMobile && (
+        <BottomNav onOpenMenu={() => setMobileOpen(true)} />
+      )}
     </div>
   )
 }
