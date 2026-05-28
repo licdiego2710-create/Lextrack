@@ -1,4 +1,5 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { fmtFecha } from '../utils/helpers'
 import PageHeader from '../components/ui/PageHeader'
@@ -11,13 +12,14 @@ const inputStyle = {
   background: 'var(--surface)', border: '1px solid var(--border)',
   color: 'var(--text)', borderRadius: 'var(--radius)',
   padding: '10px 14px', fontSize: 14, width: '100%',
+  boxSizing: 'border-box',
 }
 const selectStyle = { ...inputStyle, padding: '9px 12px', fontSize: 13 }
 const btnPri = {
   background: 'var(--primary)', color: '#fff', border: 'none',
   borderRadius: 'var(--radius)', padding: '10px 20px', fontSize: 14,
   fontWeight: 600, cursor: 'pointer', display: 'inline-flex',
-  alignItems: 'center', gap: 6, flexShrink: 0,
+  alignItems: 'center', gap: 6, flexShrink: 0, whiteSpace: 'nowrap',
 }
 const btnSec = {
   background: 'var(--surface)', color: 'var(--text)',
@@ -25,59 +27,167 @@ const btnSec = {
   padding: '10px 20px', fontSize: 14, fontWeight: 500, cursor: 'pointer',
 }
 const smallLabel = {
-  fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.5px'
+  fontSize: 11, color: 'var(--text-muted)', fontWeight: 600,
+  marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.5px',
 }
-const chip = (color) => ({
-  display: 'inline-flex', alignItems: 'center',
-  padding: '2px 9px', borderRadius: 999,
-  fontSize: 10, fontWeight: 700,
-  background: `var(--${color}-bg, var(--surface-3))`,
-  color: `var(--${color}-text, var(--text-muted))`,
-})
 
-const MATERIAS = ['', 'Civil', 'Mercantil', 'Familiar', 'Penal', 'Administrativo']
-const PARTIDOS = [
-  '', 'ZMG', 'Puerto Vallarta', 'Lagos de Moreno', 'Ciudad Guzmán',
-  'Tepatitlán', 'La Barca', 'Ocotlán', 'Arandas', 'Ameca', 'Tequila',
-  'Autlán', 'Colotlán', 'Encarnación', 'San Juan de los Lagos',
-  'Sayula', 'Tamazula', 'Tlajomulco', 'Tonal', 'Cihuatlán',
-]
+const MATERIAS = ['Civil', 'Mercantil', 'Familiar', 'Penal', 'Administrativo']
 
-const ROL_COLOR = { actor: 'info', demandado: 'warning', parte: 'neutral' }
-const ROL_LABEL = { actor: 'Actor', demandado: 'Demandado', parte: 'Parte' }
+// Normalizar texto: mayúsculas sin acentos
+function normalizar(str) {
+  return str.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+}
 
+// ── Componente principal ──────────────────────────────────────────────────────
 export default function BuscadorPartes({ session }) {
   const { org } = useOrg()
-  const toast = useToast()
+  const toast    = useToast()
+  const navigate = useNavigate()
 
   const [nombre,      setNombre]      = useState('')
   const [materia,     setMateria]     = useState('')
-  const [partido,     setPartido]     = useState('')
-  const [fechaDesde,  setFechaDesde]  = useState('')
-  const [fechaHasta,  setFechaHasta]  = useState('')
+  const [rolFiltro,   setRolFiltro]   = useState('todos') // todos | actor | demandado
 
-  const [resultados,  setResultados]  = useState(null)   // null = sin búsqueda aún
+  const [resultados,  setResultados]  = useState(null)
   const [cargando,    setCargando]    = useState(false)
   const [error,       setError]       = useState(null)
 
-  // Estados de importación
-  const [modalImportar, setModalImportar] = useState(false)
-  const [formImportar, setFormImportar] = useState({ num: '', juzgado: '', materia: '', actor: '', demandado: '', etapa: 'Instrucción' })
+  // Modal importar
+  const [modalImportar, setModalImportar]     = useState(false)
+  const [formImportar,  setFormImportar]      = useState({})
   const [guardandoImport, setGuardandoImport] = useState(false)
 
   const inputRef = useRef(null)
 
+  // ── Búsqueda ────────────────────────────────────────────────────────────────
+  async function buscar(e) {
+    e?.preventDefault()
+    const term = nombre.trim()
+    if (term.length < 3) { inputRef.current?.focus(); return }
+
+    setCargando(true); setError(null); setResultados(null)
+
+    try {
+      const termLike = `%${term}%`
+
+      // ── 1. Buscar en expedientes del despacho (actor / demandado) ──────────
+      let qExp = supabase
+        .from('expedientes')
+        .select('id, num, actor, demandado, juzgado, materia, partido_judicial, estado, creado_en')
+        .or(`actor.ilike.${termLike},demandado.ilike.${termLike}`)
+        .limit(100)
+
+      if (org?.id) qExp = qExp.eq('despacho_id', org.id)
+      if (materia)  qExp = qExp.eq('materia', materia)
+
+      // ── 2. Buscar en acuerdos del boletín (actor / demandado / descripcion) ─
+      let qBol = supabase
+        .from('acuerdos_boletin')
+        .select('expediente_num, juzgado, materia, actor, demandado, descripcion, fecha, partido_judicial')
+        .or(`actor.ilike.${termLike},demandado.ilike.${termLike},descripcion.ilike.${termLike}`)
+        .order('fecha', { ascending: false })
+        .limit(200)
+
+      if (materia) qBol = qBol.eq('materia', materia)
+
+      const [resExp, resBol] = await Promise.all([qExp, qBol])
+
+      if (resExp.error) throw resExp.error
+      if (resBol.error) throw resBol.error
+
+      // ── Consolidar resultados ─────────────────────────────────────────────
+      // Clave: expediente_num para boletín, num para expedientes propios
+      const mapa = {}
+
+      // Procesar expedientes del despacho
+      for (const e of (resExp.data || [])) {
+        const key = e.num
+        if (!mapa[key]) {
+          mapa[key] = {
+            expediente_num: key,
+            juzgado:        e.juzgado || '',
+            materia:        e.materia || '',
+            partido_judicial: e.partido_judicial || '',
+            actor:          e.actor || '',
+            demandado:      e.demandado || '',
+            fecha:          e.creado_en?.slice(0, 10) || '',
+            fuentes:        ['mis_expedientes'],
+            expediente_id:  e.id,
+            estado:         e.estado,
+          }
+        } else {
+          mapa[key].fuentes.push('mis_expedientes')
+          mapa[key].expediente_id = e.id
+          mapa[key].estado = e.estado
+        }
+      }
+
+      // Procesar acuerdos del boletín
+      for (const a of (resBol.data || [])) {
+        const key = a.expediente_num
+        if (!key) continue
+        if (!mapa[key]) {
+          mapa[key] = {
+            expediente_num: key,
+            juzgado:        a.juzgado || '',
+            materia:        a.materia || '',
+            partido_judicial: a.partido_judicial || '',
+            actor:          a.actor || '',
+            demandado:      a.demandado || '',
+            fecha:          a.fecha || '',
+            fuentes:        ['boletin'],
+            expediente_id:  null,
+            estado:         null,
+          }
+        } else {
+          if (!mapa[key].fuentes.includes('boletin')) mapa[key].fuentes.push('boletin')
+          // Completar datos faltantes desde boletín
+          if (!mapa[key].actor    && a.actor)    mapa[key].actor    = a.actor
+          if (!mapa[key].demandado && a.demandado) mapa[key].demandado = a.demandado
+          if (!mapa[key].juzgado  && a.juzgado)  mapa[key].juzgado  = a.juzgado
+          if (!mapa[key].materia  && a.materia)  mapa[key].materia  = a.materia
+          // Fecha más reciente del boletín
+          if (a.fecha && a.fecha > (mapa[key].fecha || '')) mapa[key].fecha = a.fecha
+        }
+      }
+
+      let lista = Object.values(mapa)
+
+      // ── Filtrar por rol ───────────────────────────────────────────────────
+      if (rolFiltro !== 'todos') {
+        const termU = normalizar(term)
+        lista = lista.filter(r => {
+          if (rolFiltro === 'actor')     return normalizar(r.actor || '').includes(termU)
+          if (rolFiltro === 'demandado') return normalizar(r.demandado || '').includes(termU)
+          return true
+        })
+      }
+
+      // Ordenar: mis expedientes primero, luego por fecha desc
+      lista.sort((a, b) => {
+        const aEsMio = a.fuentes.includes('mis_expedientes')
+        const bEsMio = b.fuentes.includes('mis_expedientes')
+        if (aEsMio !== bEsMio) return aEsMio ? -1 : 1
+        return (b.fecha || '') > (a.fecha || '') ? 1 : -1
+      })
+
+      setResultados(lista)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setCargando(false)
+    }
+  }
+
+  // ── Importar ─────────────────────────────────────────────────────────────
   function abrirImportar(exp) {
-    const actors = exp.partes.filter(p => p.rol === 'actor').map(p => p.nombre).join(', ')
-    const demandados = exp.partes.filter(p => p.rol === 'demandado').map(p => p.nombre).join(', ')
-    
     setFormImportar({
-      num: exp.expediente_num || '',
-      juzgado: exp.juzgado || '',
-      materia: exp.materia || '',
-      actor: actors || '',
-      demandado: demandados || '',
-      etapa: 'Instrucción'
+      num:       exp.expediente_num || '',
+      juzgado:   exp.juzgado       || '',
+      materia:   exp.materia       || '',
+      actor:     exp.actor         || '',
+      demandado: exp.demandado     || '',
+      etapa:     'Instrucción',
     })
     setModalImportar(true)
   }
@@ -85,115 +195,60 @@ export default function BuscadorPartes({ session }) {
   async function confirmarImportar() {
     if (!org?.id) return
     setGuardandoImport(true)
-    
-    const { error: errInsert } = await supabase
-      .from('expedientes')
-      .insert({
-        despacho_id: org.id,
-        user_id: session.user.id,
-        num: formImportar.num,
-        juzgado: formImportar.juzgado,
-        materia: formImportar.materia,
-        actor: formImportar.actor,
-        demandado: formImportar.demandado,
-        etapa: formImportar.etapa,
-        estado: 'Activo',
-        creado_en: new Date().toISOString(),
-        actualizado_en: new Date().toISOString()
-      })
+    const { error: errInsert } = await supabase.from('expedientes').insert({
+      despacho_id:     org.id,
+      user_id:         session.user.id,
+      num:             formImportar.num,
+      juzgado:         formImportar.juzgado,
+      materia:         formImportar.materia,
+      actor:           formImportar.actor,
+      demandado:       formImportar.demandado,
+      etapa:           formImportar.etapa,
+      estado:          'Activo',
+      creado_en:       new Date().toISOString(),
+      actualizado_en:  new Date().toISOString(),
+    })
 
     if (errInsert) {
-      toast.show('Error al importar expediente: ' + errInsert.message, 'danger')
+      toast.show('Error al importar: ' + errInsert.message, 'danger')
     } else {
-      toast.show('Expediente importado y creado exitosamente', 'success')
-      
-      // Registrar log de actividad
+      toast.show('Expediente importado exitosamente', 'success')
       await supabase.from('bitacora_actividad').insert({
         despacho_id: org.id,
-        user_id: session.user.id,
-        user_email: session.user.email,
-        accion: 'crear_expediente',
-        detalles: `Importó el expediente "${formImportar.num}" desde el buscador de partes (${formImportar.actor} vs ${formImportar.demandado})`
+        user_id:     session.user.id,
+        user_email:  session.user.email,
+        accion:      'crear_expediente',
+        detalles:    `Importó el expediente "${formImportar.num}" desde Buscador de Partes`,
       })
-
       setModalImportar(false)
+      // Re-buscar para actualizar estado
+      await buscar()
     }
     setGuardandoImport(false)
   }
 
-  // ── Búsqueda ────────────────────────────────────────────────────────────────
-  async function buscar(e) {
-    e?.preventDefault()
-    const normalizar = (str) => str.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
-    const term = normalizar(nombre)
-    if (term.length < 3) { inputRef.current?.focus(); return }
+  // ── Stats ─────────────────────────────────────────────────────────────────
+  const total         = resultados?.length ?? 0
+  const enSistema     = resultados?.filter(r => r.fuentes.includes('mis_expedientes')).length ?? 0
+  const soloBoletín   = resultados?.filter(r => !r.fuentes.includes('mis_expedientes')).length ?? 0
 
-    setCargando(true); setError(null); setResultados(null)
-
-    try {
-      // Búsqueda por trigrama en partes_judiciales
-      let q = supabase
-        .from('partes_judiciales')
-        .select('expediente_num, nombre_raw, rol, juzgado, materia, partido_judicial, fecha, url_fuente, acuerdo_id')
-        .ilike('nombre', `%${term}%`)
-        .order('fecha', { ascending: false })
-        .limit(200)
-
-      if (materia)    q = q.eq('materia', materia)
-      if (partido)    q = q.ilike('partido_judicial', `%${partido}%`)
-      if (fechaDesde) q = q.gte('fecha', fechaDesde)
-      if (fechaHasta) q = q.lte('fecha', fechaHasta)
-
-      const { data, error: err } = await q
-      if (err) throw err
-
-      // Agrupar por expediente_num
-      const porExp = {}
-      for (const r of (data || [])) {
-        const k = r.expediente_num
-        if (!porExp[k]) {
-          porExp[k] = {
-            expediente_num:  k,
-            juzgado:         r.juzgado,
-            materia:         r.materia,
-            partido_judicial: r.partido_judicial,
-            fecha:           r.fecha,
-            url_fuente:      r.url_fuente,
-            partes:          [],
-          }
-        }
-        porExp[k].partes.push({ nombre: r.nombre_raw, rol: r.rol })
-        // Fecha más reciente
-        if (r.fecha > porExp[k].fecha) porExp[k].fecha = r.fecha
-      }
-
-      setResultados(Object.values(porExp))
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setCargando(false)
-    }
-  }
-
-  // ── Estadísticas ─────────────────────────────────────────────────────────
-  const stats = resultados ? calcStats(resultados) : null
-
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: '0 0 40px' }}>
       <PageHeader
         title="Buscador de Partes"
-        subtitle="Busca personas o empresas en los boletines judiciales de Jalisco"
+        subtitle="Busca personas o empresas en el boletín judicial y tus expedientes"
       />
 
       <div style={{ maxWidth: 900, margin: '0 auto', padding: '0 20px' }}>
 
-        {/* ── Formulario de búsqueda ── */}
+        {/* ── Formulario ── */}
         <form onSubmit={buscar} style={{
           background: 'var(--surface)', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 24,
+          borderRadius: 'var(--radius-lg)', padding: 20, marginBottom: 20,
           display: 'flex', flexDirection: 'column', gap: 14,
         }}>
-          {/* Nombre */}
+          {/* Nombre + botón */}
           <div style={{ display: 'flex', gap: 10 }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 6 }}>
@@ -204,15 +259,18 @@ export default function BuscadorPartes({ session }) {
                 style={inputStyle}
                 value={nombre}
                 onChange={e => setNombre(e.target.value)}
-                placeholder="Ej: Juan Pérez López o Empresa SA de CV"
-                minLength={3}
+                placeholder="Ej: Juan Pérez López o Comercializadora SA"
                 autoFocus
               />
             </div>
             <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-              <button type="submit" disabled={cargando || nombre.trim().length < 3} style={{ ...btnPri, opacity: (cargando || nombre.trim().length < 3) ? 0.6 : 1 }}>
+              <button
+                type="submit"
+                disabled={cargando || nombre.trim().length < 3}
+                style={{ ...btnPri, opacity: (cargando || nombre.trim().length < 3) ? 0.6 : 1 }}
+              >
                 {cargando
-                  ? <><span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</span> Buscando...</>
+                  ? <><SpinIcon /> Buscando...</>
                   : '🔍 Buscar'
                 }
               </button>
@@ -220,33 +278,35 @@ export default function BuscadorPartes({ session }) {
           </div>
 
           {/* Filtros */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-            <div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ minWidth: 150 }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '.4px' }}>Materia</div>
               <select style={selectStyle} value={materia} onChange={e => setMateria(e.target.value)}>
                 <option value="">Todas</option>
-                {MATERIAS.filter(Boolean).map(m => <option key={m}>{m}</option>)}
+                {MATERIAS.map(m => <option key={m}>{m}</option>)}
               </select>
             </div>
             <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '.4px' }}>Partido judicial</div>
-              <select style={selectStyle} value={partido} onChange={e => setPartido(e.target.value)}>
-                <option value="">Todos</option>
-                {PARTIDOS.filter(Boolean).map(p => <option key={p}>{p}</option>)}
-              </select>
-            </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '.4px' }}>Desde</div>
-              <input type="date" style={selectStyle} value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}/>
-            </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '.4px' }}>Hasta</div>
-              <input type="date" style={selectStyle} value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}/>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '.4px' }}>Rol procesal</div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {[['todos', 'Todos'], ['actor', 'Actor'], ['demandado', 'Demandado']].map(([v, l]) => (
+                  <button
+                    key={v} type="button"
+                    onClick={() => setRolFiltro(v)}
+                    style={{
+                      padding: '7px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                      borderRadius: 'var(--radius)', border: '1px solid var(--border)',
+                      background: rolFiltro === v ? 'var(--primary)' : 'var(--surface)',
+                      color: rolFiltro === v ? '#fff' : 'var(--text)',
+                    }}
+                  >{l}</button>
+                ))}
+              </div>
             </div>
           </div>
 
           <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-            🔎 Busca en los boletines judiciales scrapeados. Los datos se actualizan cada noche.
+            🔎 Busca simultáneamente en el boletín judicial y en tus expedientes registrados.
           </div>
         </form>
 
@@ -257,15 +317,12 @@ export default function BuscadorPartes({ session }) {
           </div>
         )}
 
-        {/* ── Estadísticas ── */}
-        {stats && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 20 }}>
-            <StatBox label="Expedientes encontrados" value={stats.total} />
-            <StatBox label="Como actor" value={stats.comoActor} color="var(--info-text)" />
-            <StatBox label="Como demandado" value={stats.comoDemandado} color="var(--warning-text)" />
-            {Object.entries(stats.porMateria).sort((a,b) => b[1]-a[1]).slice(0,3).map(([m, n]) => (
-              <StatBox key={m} label={m} value={n} />
-            ))}
+        {/* ── Stats rápidas ── */}
+        {resultados !== null && resultados.length > 0 && (
+          <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+            <StatPill label="Total encontrados" value={total} color="var(--primary)" />
+            <StatPill label="En tu sistema" value={enSistema} color="var(--success, #10b981)" />
+            <StatPill label="Solo en boletín" value={soloBoletín} color="var(--text-muted)" />
           </div>
         )}
 
@@ -275,90 +332,25 @@ export default function BuscadorPartes({ session }) {
             <div style={{ fontSize: 40, marginBottom: 12 }}>🔍</div>
             <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6 }}>Sin resultados</div>
             <div style={{ fontSize: 13 }}>
-              No encontramos "{nombre}" en los boletines judiciales indexados.
+              No encontramos "{nombre}" en el boletín judicial ni en tus expedientes.
             </div>
             <div style={{ fontSize: 12, marginTop: 8 }}>
-              Los datos se actualizan cada noche. Si el caso es reciente puede que aún no esté indexado.
+              El boletín se actualiza cada noche de lunes a viernes.
             </div>
           </div>
         )}
 
         {/* ── Resultados ── */}
         {resultados && resultados.length > 0 && (
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 12 }}>
-              {resultados.length} expediente(s) encontrado(s)
-            </div>
-
-            {/* Agrupado por materia */}
-            {Object.entries(agruparPorMateria(resultados)).map(([mat, exps]) => (
-              <div key={mat} style={{ marginBottom: 24 }}>
-                <div style={{
-                  fontSize: 12, fontWeight: 700, color: 'var(--primary)',
-                  textTransform: 'uppercase', letterSpacing: '.6px',
-                  borderBottom: '2px solid var(--primary)', paddingBottom: 6, marginBottom: 10,
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                }}>
-                  <span>⚖️ {mat || 'Sin materia'}</span>
-                  <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text-muted)' }}>{exps.length} expediente(s)</span>
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {exps.map(exp => (
-                    <div key={exp.expediente_num} style={{
-                      background: 'var(--surface)', border: '1px solid var(--border)',
-                      borderRadius: 'var(--radius)', padding: '12px 14px',
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          {/* Número + juzgado */}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 5 }}>
-                            <span style={{ fontFamily: 'monospace', fontSize: 14, fontWeight: 800, color: 'var(--primary)' }}>
-                              {exp.expediente_num}
-                            </span>
-                            {exp.partido_judicial && exp.partido_judicial !== 'ZMG' && (
-                              <span style={chip('neutral')}>{exp.partido_judicial}</span>
-                            )}
-                          </div>
-                          {/* Juzgado */}
-                          {exp.juzgado && (
-                            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
-                              🏛️ {exp.juzgado}
-                            </div>
-                          )}
-                          {/* Partes encontradas */}
-                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
-                            {exp.partes.map((p, i) => (
-                              <span key={i} style={chip(ROL_COLOR[p.rol] || 'neutral')}>
-                                {ROL_LABEL[p.rol] || p.rol}: {p.nombre}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                        {/* Fecha y Acciones */}
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
-                          <div style={{ textAlign: 'right' }}>
-                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Último acuerdo</div>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{fmtFecha(exp.fecha)}</div>
-                          </div>
-                          {org?.id && (
-                            <button
-                              onClick={() => abrirImportar(exp)}
-                              style={{
-                                background: 'var(--primary-bg, #2563eb10)', color: 'var(--primary)', border: '1px solid var(--primary)',
-                                borderRadius: 'var(--radius)', padding: '5px 10px', fontSize: 11, fontWeight: 700,
-                                cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4
-                              }}
-                            >
-                              ✨ Importar
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {resultados.map(exp => (
+              <TarjetaExpediente
+                key={exp.expediente_num}
+                exp={exp}
+                termBuscado={nombre.trim()}
+                onImportar={() => abrirImportar(exp)}
+                onVerExpediente={() => navigate(`/app/expedientes?id=${exp.expediente_id}`)}
+              />
             ))}
           </div>
         )}
@@ -368,18 +360,17 @@ export default function BuscadorPartes({ session }) {
           <div style={{ textAlign: 'center', padding: '48px 24px', color: 'var(--text-muted)' }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>🏛️</div>
             <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6 }}>
-              Buscador de Partes en Boletín Judicial Jalisco
+              Buscador de Partes — Jalisco
             </div>
-            <div style={{ fontSize: 13, maxWidth: 420, margin: '0 auto', lineHeight: 1.7 }}>
-              Escribe el nombre de una persona o empresa para ver en qué expedientes aparece,
-              en qué juzgados y como qué parte procesal.
+            <div style={{ fontSize: 13, maxWidth: 440, margin: '0 auto', lineHeight: 1.7 }}>
+              Escribe el nombre de una persona física o empresa para ver en qué
+              expedientes aparece, en qué juzgados y su rol procesal.
             </div>
           </div>
         )}
-
       </div>
 
-      {/* Modal para confirmar importación */}
+      {/* ── Modal importar ── */}
       {modalImportar && (
         <Modal
           open={modalImportar}
@@ -398,102 +389,181 @@ export default function BuscadorPartes({ session }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div>
               <div style={smallLabel}>Número de Expediente</div>
-              <input
-                style={inputStyle}
-                value={formImportar.num}
-                onChange={e => setFormImportar(prev => ({ ...prev, num: e.target.value }))}
-              />
+              <input style={inputStyle} value={formImportar.num}
+                onChange={e => setFormImportar(p => ({ ...p, num: e.target.value }))} />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div>
                 <div style={smallLabel}>Materia</div>
-                <input
-                  style={inputStyle}
-                  value={formImportar.materia}
-                  onChange={e => setFormImportar(prev => ({ ...prev, materia: e.target.value }))}
-                />
+                <input style={inputStyle} value={formImportar.materia}
+                  onChange={e => setFormImportar(p => ({ ...p, materia: e.target.value }))} />
               </div>
               <div>
                 <div style={smallLabel}>Etapa Procesal</div>
-                <input
-                  style={inputStyle}
-                  value={formImportar.etapa}
-                  onChange={e => setFormImportar(prev => ({ ...prev, etapa: e.target.value }))}
-                />
+                <input style={inputStyle} value={formImportar.etapa}
+                  onChange={e => setFormImportar(p => ({ ...p, etapa: e.target.value }))} />
               </div>
             </div>
             <div>
               <div style={smallLabel}>Juzgado</div>
-              <input
-                style={inputStyle}
-                value={formImportar.juzgado}
-                onChange={e => setFormImportar(prev => ({ ...prev, juzgado: e.target.value }))}
-              />
+              <input style={inputStyle} value={formImportar.juzgado}
+                onChange={e => setFormImportar(p => ({ ...p, juzgado: e.target.value }))} />
             </div>
             <div>
               <div style={smallLabel}>Actor / Solicitante</div>
-              <input
-                style={inputStyle}
-                value={formImportar.actor}
-                onChange={e => setFormImportar(prev => ({ ...prev, actor: e.target.value }))}
-                placeholder="Nombre del Actor"
-              />
+              <input style={inputStyle} value={formImportar.actor} placeholder="Nombre del Actor"
+                onChange={e => setFormImportar(p => ({ ...p, actor: e.target.value }))} />
             </div>
             <div>
               <div style={smallLabel}>Demandado / Requerido</div>
-              <input
-                style={inputStyle}
-                value={formImportar.demandado}
-                onChange={e => setFormImportar(prev => ({ ...prev, demandado: e.target.value }))}
-                placeholder="Nombre del Demandado"
-              />
+              <input style={inputStyle} value={formImportar.demandado} placeholder="Nombre del Demandado"
+                onChange={e => setFormImportar(p => ({ ...p, demandado: e.target.value }))} />
             </div>
           </div>
         </Modal>
       )}
-
     </div>
   )
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Sub-componentes ───────────────────────────────────────────────────────────
 
-function calcStats(resultados) {
-  let comoActor = 0, comoDemandado = 0
-  const porMateria = {}
+function TarjetaExpediente({ exp, termBuscado, onImportar, onVerExpediente }) {
+  const esMio    = exp.fuentes.includes('mis_expedientes')
+  const termU    = normalizar(termBuscado)
+  const actorMatch    = exp.actor    && normalizar(exp.actor).includes(termU)
+  const demandadoMatch = exp.demandado && normalizar(exp.demandado).includes(termU)
 
-  for (const exp of resultados) {
-    const roles = exp.partes.map(p => p.rol)
-    if (roles.includes('actor'))    comoActor++
-    if (roles.includes('demandado')) comoDemandado++
-    const mat = exp.materia || 'Sin materia'
-    porMateria[mat] = (porMateria[mat] || 0) + 1
-  }
-
-  return { total: resultados.length, comoActor, comoDemandado, porMateria }
-}
-
-function agruparPorMateria(resultados) {
-  const grupos = {}
-  for (const exp of resultados) {
-    const k = exp.materia || 'Sin materia'
-    if (!grupos[k]) grupos[k] = []
-    grupos[k].push(exp)
-  }
-  // Ordenar grupos por cantidad desc
-  return Object.fromEntries(
-    Object.entries(grupos).sort((a, b) => b[1].length - a[1].length)
-  )
-}
-
-function StatBox({ label, value, color }) {
   return (
     <div style={{
-      background: 'var(--surface)', border: '1px solid var(--border)',
-      borderRadius: 'var(--radius)', padding: '12px 16px', textAlign: 'center',
+      background: 'var(--surface)', borderRadius: 'var(--radius)',
+      border: esMio ? '1px solid var(--primary)' : '1px solid var(--border)',
+      padding: '14px 16px',
     }}>
-      <div style={{ fontSize: 24, fontWeight: 800, color: color || 'var(--text)' }}>{value}</div>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{label}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Número + badges fuente */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+            <span style={{ fontFamily: 'monospace', fontSize: 15, fontWeight: 800, color: 'var(--primary)' }}>
+              {exp.expediente_num}
+            </span>
+            {esMio && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                background: 'var(--primary)', color: '#fff',
+              }}>
+                En tu sistema
+              </span>
+            )}
+            {exp.fuentes.includes('boletin') && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                background: 'var(--surface-3, #f1f5f9)', color: 'var(--text-muted)',
+              }}>
+                Boletín Judicial
+              </span>
+            )}
+            {exp.estado && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                background: exp.estado === 'Activo' ? '#dcfce7' : '#f1f5f9',
+                color: exp.estado === 'Activo' ? '#16a34a' : '#64748b',
+              }}>
+                {exp.estado}
+              </span>
+            )}
+          </div>
+
+          {/* Juzgado + materia */}
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
+            {exp.juzgado && <span>🏛️ {exp.juzgado}</span>}
+            {exp.juzgado && exp.materia && <span style={{ margin: '0 6px', opacity: .4 }}>·</span>}
+            {exp.materia && <span style={{ fontWeight: 600 }}>{exp.materia}</span>}
+            {exp.partido_judicial && exp.partido_judicial !== 'ZMG' && (
+              <span style={{ marginLeft: 6, opacity: .7 }}>— {exp.partido_judicial}</span>
+            )}
+          </div>
+
+          {/* Partes */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {exp.actor && (
+              <span style={{
+                fontSize: 12, padding: '3px 10px', borderRadius: 999,
+                background: actorMatch ? '#dbeafe' : 'var(--surface-3, #f8fafc)',
+                color: actorMatch ? '#1d4ed8' : 'var(--text-muted)',
+                fontWeight: actorMatch ? 700 : 500,
+                border: actorMatch ? '1px solid #93c5fd' : '1px solid transparent',
+              }}>
+                Actor: {exp.actor}
+              </span>
+            )}
+            {exp.demandado && (
+              <span style={{
+                fontSize: 12, padding: '3px 10px', borderRadius: 999,
+                background: demandadoMatch ? '#fef3c7' : 'var(--surface-3, #f8fafc)',
+                color: demandadoMatch ? '#92400e' : 'var(--text-muted)',
+                fontWeight: demandadoMatch ? 700 : 500,
+                border: demandadoMatch ? '1px solid #fcd34d' : '1px solid transparent',
+              }}>
+                Demandado: {exp.demandado}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Acciones */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
+          {exp.fecha && (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'right' }}>
+              <div>Último acuerdo</div>
+              <div style={{ fontWeight: 600, color: 'var(--text)' }}>{fmtFecha(exp.fecha)}</div>
+            </div>
+          )}
+          {esMio ? (
+            <button
+              onClick={onVerExpediente}
+              style={{
+                background: 'var(--primary)', color: '#fff', border: 'none',
+                borderRadius: 'var(--radius)', padding: '6px 12px',
+                fontSize: 11, fontWeight: 700, cursor: 'pointer',
+              }}
+            >
+              Ver expediente →
+            </button>
+          ) : (
+            <button
+              onClick={onImportar}
+              style={{
+                background: 'transparent', color: 'var(--primary)',
+                border: '1px solid var(--primary)',
+                borderRadius: 'var(--radius)', padding: '6px 12px',
+                fontSize: 11, fontWeight: 700, cursor: 'pointer',
+              }}
+            >
+              ✨ Importar
+            </button>
+          )}
+        </div>
+      </div>
     </div>
+  )
+}
+
+function StatPill({ label, value, color }) {
+  return (
+    <div style={{
+      display: 'inline-flex', alignItems: 'center', gap: 8,
+      background: 'var(--surface)', border: '1px solid var(--border)',
+      borderRadius: 'var(--radius)', padding: '6px 14px',
+    }}>
+      <span style={{ fontSize: 18, fontWeight: 800, color }}>{value}</span>
+      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{label}</span>
+    </div>
+  )
+}
+
+function SpinIcon() {
+  return (
+    <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</span>
   )
 }
