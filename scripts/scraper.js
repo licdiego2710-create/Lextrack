@@ -187,16 +187,9 @@ function normalizarJuzgado(nombre) {
 async function scrapearBoletin() {
   const browser = await chromium.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
   })
 
-  const context = await browser.newContext({
-    viewport: { width: 1280, height: 800 },
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    locale: 'es-MX',
-  })
-
-  const page = await context.newPage()
+  const page = await browser.newPage()
   page.setDefaultTimeout(PAGE_TIMEOUT_MS)
 
   const acuerdos = []
@@ -290,10 +283,14 @@ async function extraerItems(page, juzgadoNombre) {
   try {
     // Esperar que aparezcan items o confirmar que no hay resultados
     try {
-      await page.waitForSelector(SEL.items, { timeout: 5000 })
-    } catch { return resultados /* sin items */ }
+      await page.waitForSelector(SEL.items, { state: 'attached', timeout: 5000 })
+    } catch (e) { 
+      log(`waitForSelector .item failed for ${juzgadoNombre}: ${e.message}`)
+      return resultados /* sin items */ 
+    }
 
     const items = await page.$$(SEL.items)
+    log(`Found ${items.length} items for ${juzgadoNombre}`)
 
     for (const item of items) {
       try {
