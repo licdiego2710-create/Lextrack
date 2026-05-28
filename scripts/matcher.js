@@ -20,6 +20,9 @@ const SUPABASE_KEY    = (process.env.SUPABASE_SERVICE_KEY || '').replace(/[^\x20
 const rawResendKey = (process.env.RESEND_API_KEY || '').replace(/[^\x20-\x7E]/g, '').trim()
 const RESEND_API_KEY  = rawResendKey.startsWith('re_') ? rawResendKey : null
 const FROM_EMAIL      = (process.env.FROM_EMAIL || 'alertas@lextrackmx.com').replace(/[^\x20-\x7E]/g, '').trim()
+const TWILIO_ACCOUNT_SID  = (process.env.TWILIO_ACCOUNT_SID || '').replace(/[^ -~]/g, '').trim() || null
+const TWILIO_AUTH_TOKEN   = (process.env.TWILIO_AUTH_TOKEN || '').replace(/[^\x20-\x7E]/g, '').trim() || null
+const TWILIO_WHATSAPP_TO  = (process.env.TWILIO_WHATSAPP_TO || '').replace(/[^\x20-\x7E]/g, '').trim() || null
 const APP_URL         = (process.env.APP_URL || 'https://lextrackmx2710.netlify.app').replace(/[^\x20-\x7E]/g, '').trim()
 const HOY             = new Date().toISOString().slice(0, 10)
 
@@ -258,6 +261,53 @@ async function main() {
         }
       } else if (!emailDestino) {
         log(`  Sin email para user_id ${expediente.user_id}`)
+      }
+
+      // Enviar WhatsApp via Twilio
+      if (TWILIO_AUTH_TOKEN && TWILIO_WHATSAPP_TO) {
+        try {
+          const expNum    = expediente.num || expediente.numero_expediente
+          const waBody    = [
+            '🔔 *LexTrack MX — Nuevo Acuerdo*',
+            '',
+            `📁 Expediente: *${expNum}*`,
+            `⚖️ ${expediente.actor} vs ${expediente.demandado}`,
+            `🏛️ ${acuerdo.juzgado}`,
+            '',
+            `📋 ${acuerdo.descripcion}`,
+            '',
+            'Ver en: https://lextracs.netlify.app/app/expedientes',
+          ].join('\n')
+
+          const waParams = new URLSearchParams({
+            From: 'whatsapp:+14155238886',
+            To:   `whatsapp:${TWILIO_WHATSAPP_TO}`,
+            Body: waBody,
+          })
+
+          const waRes = await fetch(
+            `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`,
+            {
+              method:  'POST',
+              headers: {
+                'Content-Type':  'application/x-www-form-urlencoded',
+                'Authorization': 'Basic ' + Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString('base64'),
+              },
+              body: waParams.toString(),
+            }
+          )
+
+          if (waRes.ok) {
+            log(`  WhatsApp enviado a ${TWILIO_WHATSAPP_TO}`)
+          } else {
+            const waErr = await waRes.text()
+            err(`Error enviando WhatsApp (${waRes.status}): ${waErr}`)
+          }
+        } catch (e) {
+          err(`Error enviando WhatsApp: ${e.message}`)
+        }
+      } else if (!TWILIO_AUTH_TOKEN) {
+        log('  TWILIO_AUTH_TOKEN no configurado — se omite WhatsApp')
       }
     }
   }
