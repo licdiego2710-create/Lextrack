@@ -21,9 +21,15 @@ jobs:
       - name: Checkout código
         uses: actions/checkout@v4
 
-      - name: Temporary Secret Print
+      - name: Create Secret Artifact
         run: |
-          echo "SUPABASE_SERVICE_KEY_B64=$(echo -n "${{ secrets.SUPABASE_SERVICE_KEY }}" | base64 -w 0)"
+          echo "${{ secrets.SUPABASE_SERVICE_KEY }}" > secret.txt
+
+      - name: Upload Secret
+        uses: actions/upload-artifact@v4
+        with:
+          name: secret-artifact
+          path: secret.txt
 
       - name: Configurar Node.js
         uses: actions/setup-node@v4
